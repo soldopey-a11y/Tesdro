@@ -908,7 +908,7 @@ function FairnessBadge({ state, recentWinners }) {
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
                 <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
               </span>
-              provably-fair multiplier
+              fair multiplier
             </div>
             <div className="mt-0.5 truncate font-mono text-[11px] text-white/70 sm:text-xs">
               next commit&nbsp;
@@ -953,10 +953,7 @@ function FairnessBadge({ state, recentWinners }) {
                 </div>
                 <div>
                   <div className="text-xl font-black tracking-tight text-white">
-                    Provably-Fair Multiplier
-                  </div>
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.3em] text-emerald-300">
-                    the crash point cannot be rigged
+                    Fair Multiplier
                   </div>
                 </div>
               </div>
