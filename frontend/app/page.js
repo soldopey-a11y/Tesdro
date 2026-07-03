@@ -23,8 +23,10 @@ import {
   Lock,
   X,
   ExternalLink,
+  Heart,
   Zap as ZapIcon,
 } from 'lucide-react'
+import Link from 'next/link'
 
 // ---------- Helpers ----------
 function shortAddr(a) {
@@ -94,6 +96,12 @@ function Header({ state }) {
         </div>
 
         <div className="flex items-center gap-2">
+          <Link href="/discover" className="hidden items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70 hover:bg-white/10 hover:text-white sm:flex">
+            Discover
+          </Link>
+          <Link href="/create" className="hidden items-center gap-1.5 rounded-full border border-fuchsia-400/30 bg-fuchsia-500/10 px-3 py-1 text-xs font-semibold text-fuchsia-200 hover:bg-fuchsia-500/20 md:flex">
+            <Heart className="h-3 w-3" /> Support
+          </Link>
           <div className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-widest sm:text-xs ${running ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-300' : 'border-white/15 bg-white/5 text-white/50'}`}>
             <span className="relative flex h-1.5 w-1.5">
               {running && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>}

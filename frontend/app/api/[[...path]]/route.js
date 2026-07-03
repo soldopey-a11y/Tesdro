@@ -13,6 +13,8 @@ const USE_REAL_HOLDERS = process.env.USE_REAL_HOLDERS === '1' && !!HELIUS_API_KE
 const DB_NAME = process.env.DB_NAME || 'ansdrop'
 const HELIUS_CACHE_TTL_MS = 120000 // 2 min
 const MAX_CRASH_POINT = 100 // cap multiplier at 100x
+const SUPPORT_DEPOSIT_WALLET = process.env.SUPPORT_DEPOSIT_WALLET || ''
+const TIP_WALLET = process.env.TIP_WALLET || SUPPORT_DEPOSIT_WALLET
 
 // ---------- Provably-fair helpers ----------
 function newSeed() {
@@ -170,6 +172,68 @@ async function getEligibleHolders() {
   return holders.filter((h) => h.balance >= MIN_ELIGIBLE_HOLD)
 }
 
+// ---------- Per-mint holder cache for community projects ----------
+const _projectHolderCache = new Map() // mint -> { at, holders }
+
+async function fetchHoldersForMint(mint, decimals) {
+  if (!USE_REAL_HOLDERS) return null
+  const url = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`
+  const ownerTotals = new Map()
+  let page = 1
+  const limit = 1000
+  const maxPages = 20
+  while (page <= maxPages) {
+    const body = {
+      jsonrpc: '2.0',
+      id: 'ansdrop-project',
+      method: 'getTokenAccounts',
+      params: { mint, page, limit },
+    }
+    let json
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) return null
+      json = await res.json()
+    } catch (e) {
+      return null
+    }
+    if (json?.error) return null
+    const accs = json?.result?.token_accounts || []
+    if (accs.length === 0) break
+    for (const a of accs) {
+      const amt = BigInt(a.amount || 0)
+      if (amt <= 0n) continue
+      const owner = a.owner
+      if (!owner) continue
+      ownerTotals.set(owner, (ownerTotals.get(owner) || 0n) + amt)
+    }
+    if (accs.length < limit) break
+    page++
+  }
+  const scale = 10 ** decimals
+  const holders = []
+  for (const [owner, raw] of ownerTotals.entries()) {
+    holders.push({ address: owner, balance: Number(raw) / scale })
+  }
+  holders.sort((a, b) => b.balance - a.balance)
+  return holders
+}
+
+async function getProjectHolders(mint, decimals) {
+  const now = Date.now()
+  const cached = _projectHolderCache.get(mint)
+  if (cached && now - cached.at < HELIUS_CACHE_TTL_MS) return cached
+  const real = await fetchHoldersForMint(mint, decimals)
+  const holders = real && real.length > 0 ? real : []
+  const entry = { at: now, holders, source: real && real.length > 0 ? 'helius' : 'empty' }
+  _projectHolderCache.set(mint, entry)
+  return entry
+}
+
 // ---------- Round / winner logic ----------
 function generateCrashPointFromRand(r) {
   // House-edge-free-ish exponential crash multiplier, capped at MAX_CRASH_POINT.
@@ -280,6 +344,180 @@ async function tryAdvanceRound(db) {
   return winnerDoc
 }
 
+// ---------- PROJECT (community-drop) helpers ----------
+function makeSlug(name) {
+  const base = String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+  const suffix = crypto.randomBytes(3).toString('hex')
+  return (base || 'drop') + '-' + suffix
+}
+
+function makeAdminKey() {
+  return crypto.randomBytes(16).toString('hex')
+}
+
+function projectStateId(slug) {
+  return 'project:' + slug
+}
+
+async function ensureProjectState(db, project) {
+  const stateId = projectStateId(project.slug)
+  const st = await db.collection('raffle_state').findOne({ _id: stateId })
+  if (!st) {
+    const seed = newSeed()
+    const doc = {
+      _id: stateId,
+      projectSlug: project.slug,
+      systemStatus: 'stopped',
+      nextRoundEndsAt: null,
+      roundNumber: 0,
+      intervalMs: project.intervalMs || ROUND_INTERVAL_MS,
+      startedAt: null,
+      seed,
+      seedCommit: sha256hex(seed),
+    }
+    await db.collection('raffle_state').insertOne(doc)
+    return doc
+  }
+  return st
+}
+
+async function tryAdvanceProjectRound(db, project) {
+  const now = new Date()
+  const nextSeedValue = newSeed()
+  const nextCommitValue = sha256hex(nextSeedValue)
+  const intervalMs = project.intervalMs || ROUND_INTERVAL_MS
+
+  const prev = await db.collection('raffle_state').findOneAndUpdate(
+    {
+      _id: projectStateId(project.slug),
+      systemStatus: 'running',
+      nextRoundEndsAt: { $lte: now, $ne: null },
+    },
+    {
+      $set: {
+        nextRoundEndsAt: new Date(Date.now() + intervalMs),
+        seed: nextSeedValue,
+        seedCommit: nextCommitValue,
+      },
+      $inc: { roundNumber: 1 },
+    },
+    { returnDocument: 'before' }
+  )
+  const claimed = prev && (prev.value || prev)
+  if (!claimed || !claimed._id) return null
+
+  const { holders } = await getProjectHolders(project.mint, project.decimals || 6)
+  const eligible = holders.filter((h) => h.balance >= project.minHold)
+  if (eligible.length === 0) return null
+
+  const roundSeed = claimed.seed
+  const roundCommit = claimed.seedCommit
+  const thisRoundNumber = claimed.roundNumber
+
+  const winnerRand = seedRandom(roundSeed, `winner:${thisRoundNumber}`)
+  const winner = eligible[Math.floor(winnerRand * eligible.length)]
+  const crashRand = seedRandom(roundSeed, `crash:${thisRoundNumber}`)
+  const crashPoint = generateCrashPointFromRand(crashRand)
+  const tokensWon = Math.floor(project.baseReward * crashPoint)
+
+  const winnerDoc = {
+    id: uuidv4(),
+    projectSlug: project.slug,
+    roundNumber: thisRoundNumber,
+    address: winner.address,
+    balance: winner.balance,
+    crashPoint: parseFloat(crashPoint.toFixed(2)),
+    tokensWon,
+    baseReward: project.baseReward,
+    endedAt: new Date(),
+    settledAt: claimed.nextRoundEndsAt,
+    paid: false,
+    paidAt: null,
+    txHash: null,
+    seedCommit: roundCommit,
+    revealedSeed: roundSeed,
+    eligibleCount: eligible.length,
+    winnerIndex: Math.floor(winnerRand * eligible.length),
+  }
+  await db.collection('winners').insertOne(winnerDoc)
+  return winnerDoc
+}
+
+async function handleGetProjectState(db, project) {
+  const initial = await ensureProjectState(db, project)
+  let justPicked = null
+  if (initial.systemStatus === 'running') {
+    for (let i = 0; i < 5; i++) {
+      const w = await tryAdvanceProjectRound(db, project)
+      if (!w) break
+      justPicked = w
+    }
+  }
+  const state = await db.collection('raffle_state').findOne({ _id: projectStateId(project.slug) })
+  const recent = await db
+    .collection('winners')
+    .find({ projectSlug: project.slug }, { projection: { _id: 0 } })
+    .sort({ endedAt: -1 })
+    .limit(10)
+    .toArray()
+
+  const { holders: allHolders, source } = await getProjectHolders(project.mint, project.decimals || 6)
+  const eligible = allHolders.filter((h) => h.balance >= project.minHold)
+  const totalHolders = allHolders.length
+  const totalEligibleBalance = eligible.reduce((s, h) => s + h.balance, 0)
+
+  const distAgg = await db
+    .collection('winners')
+    .aggregate([
+      { $match: { projectSlug: project.slug } },
+      { $group: { _id: null, total: { $sum: '$tokensWon' }, count: { $sum: 1 } } },
+    ])
+    .toArray()
+  const totalDistributed = distAgg[0]?.total || 0
+  const winnersCount = distAgg[0]?.count || 0
+
+  return {
+    systemStatus: state.systemStatus || 'stopped',
+    mint: project.mint,
+    minEligibleHold: project.minHold,
+    intervalMs: project.intervalMs || ROUND_INTERVAL_MS,
+    now: Date.now(),
+    nextRoundEndsAt: state.nextRoundEndsAt,
+    roundNumber: state.roundNumber,
+    eligibleCount: eligible.length,
+    totalHolders,
+    totalEligibleBalance,
+    baseReward: project.baseReward,
+    maxCrashPoint: MAX_CRASH_POINT,
+    seedCommit: state.seedCommit || null,
+    recentWinners: recent,
+    justPicked,
+    holderSource: source,
+    totalDistributed,
+    winnersCount,
+    // Community-drop meta
+    slug: project.slug,
+    name: project.name,
+    ticker: project.ticker,
+    supporterName: project.supporterName || null,
+    supporterHandle: project.supporterHandle || null,
+    supporterMessage: project.supporterMessage || null,
+    depositWallet: SUPPORT_DEPOSIT_WALLET,
+    tipWallet: TIP_WALLET,
+    depositTx: project.depositTx || null,
+  }
+}
+
+function stripProjectSecrets(p) {
+  if (!p) return null
+  const { _id, adminKey, ...rest } = p
+  return rest
+}
+
 // ---------- Handlers ----------
 async function handleGetState(db) {
   const initial = await ensureState(db)
@@ -372,6 +610,46 @@ export async function GET(request, { params }) {
         .toArray()
       return NextResponse.json({ winners })
     }
+
+    // ---------- PROJECTS (community drops) ----------
+    if (route === 'projects') {
+      const items = await db
+        .collection('projects')
+        .find({}, { projection: { adminKey: 0 } })
+        .sort({ createdAt: -1 })
+        .toArray()
+      return NextResponse.json({
+        projects: items.map(stripProjectSecrets),
+        depositWallet: SUPPORT_DEPOSIT_WALLET,
+        tipWallet: TIP_WALLET,
+      })
+    }
+    if (route.startsWith('projects/')) {
+      const parts = route.split('/')
+      const slug = parts[1]
+      const sub = parts.slice(2).join('/')
+      const project = await db.collection('projects').findOne({ slug })
+      if (!project) {
+        return NextResponse.json({ error: 'project not found' }, { status: 404 })
+      }
+      if (!sub || sub === '') {
+        return NextResponse.json({ project: stripProjectSecrets(project) })
+      }
+      if (sub === 'state') {
+        const data = await handleGetProjectState(db, project)
+        return NextResponse.json(data)
+      }
+      if (sub === 'winners') {
+        const winners = await db
+          .collection('winners')
+          .find({ projectSlug: slug }, { projection: { _id: 0 } })
+          .sort({ endedAt: -1 })
+          .limit(50)
+          .toArray()
+        return NextResponse.json({ winners })
+      }
+    }
+
     return NextResponse.json({ error: 'not found' }, { status: 404 })
   } catch (e) {
     console.error('GET error', e)
@@ -502,6 +780,203 @@ export async function POST(request, { params }) {
           { upsert: true }
         )
         return NextResponse.json({ ok: true, systemStatus: 'stopped' })
+      }
+    }
+
+    // ---------- PROJECTS (community drops) ----------
+    // Create a new supported community drop (open, no auth).
+    if (route === 'projects') {
+      const body = await request.json().catch(() => ({}))
+      const name = String(body.name || '').trim()
+      const ticker = String(body.ticker || '').trim().toUpperCase()
+      const mint = String(body.mint || '').trim()
+      const decimals = parseInt(body.decimals || 6, 10)
+      const minHold = parseFloat(body.minHold || 0)
+      const baseReward = parseFloat(body.baseReward || 0)
+      const totalPool = parseFloat(body.totalPool || 0)
+      const intervalMs = Math.max(30000, parseInt(body.intervalMs || ROUND_INTERVAL_MS, 10))
+      const supporterName = String(body.supporterName || '').slice(0, 60)
+      const supporterHandle = String(body.supporterHandle || '').slice(0, 60)
+      const supporterMessage = String(body.supporterMessage || '').slice(0, 400)
+      const logoUrl = String(body.logoUrl || '').slice(0, 400)
+      const tipSol = parseFloat(body.tipSol || 0)
+
+      if (!name || name.length < 2) {
+        return NextResponse.json({ error: 'name is required' }, { status: 400 })
+      }
+      if (!ticker || ticker.length < 1) {
+        return NextResponse.json({ error: 'ticker is required' }, { status: 400 })
+      }
+      if (!mint || mint.length < 32) {
+        return NextResponse.json({ error: 'valid mint address is required' }, { status: 400 })
+      }
+      if (!(minHold > 0)) {
+        return NextResponse.json({ error: 'minHold must be > 0' }, { status: 400 })
+      }
+      if (!(baseReward > 0)) {
+        return NextResponse.json({ error: 'baseReward must be > 0' }, { status: 400 })
+      }
+
+      const slug = makeSlug(name + '-' + ticker)
+      const adminKey = makeAdminKey()
+      const project = {
+        slug,
+        name,
+        ticker,
+        mint,
+        decimals,
+        minHold,
+        baseReward,
+        totalPool,
+        intervalMs,
+        supporterName,
+        supporterHandle,
+        supporterMessage,
+        logoUrl,
+        tipSol,
+        adminKey,
+        createdAt: new Date(),
+        depositTx: null,
+      }
+      await db.collection('projects').insertOne(project)
+      return NextResponse.json({
+        ok: true,
+        slug,
+        adminKey,
+        depositWallet: SUPPORT_DEPOSIT_WALLET,
+        tipWallet: TIP_WALLET,
+        publicUrl: `/drops/${slug}`,
+        adminUrl: `/drops/${slug}/admin`,
+      })
+    }
+
+    if (route.startsWith('projects/')) {
+      const parts = route.split('/')
+      const slug = parts[1]
+      const sub = parts.slice(2).join('/')
+      const project = await db.collection('projects').findOne({ slug })
+      if (!project) {
+        return NextResponse.json({ error: 'project not found' }, { status: 404 })
+      }
+
+      // Dev-only helper
+      if (sub === 'dev/force-crash') {
+        await db.collection('raffle_state').updateOne(
+          { _id: projectStateId(slug) },
+          { $set: { nextRoundEndsAt: new Date(Date.now() - 1000) } },
+          { upsert: false }
+        )
+        const w = await tryAdvanceProjectRound(db, project)
+        return NextResponse.json({ ok: true, winner: w })
+      }
+
+      // Admin actions: header x-admin-key must match project.adminKey
+      if (sub.startsWith('admin/')) {
+        const key = request.headers.get('x-admin-key')
+        if (!key || key !== project.adminKey) {
+          return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+        }
+        const action = sub.slice('admin/'.length)
+
+        if (action === 'ping') return NextResponse.json({ ok: true })
+
+        if (action === 'start') {
+          await ensureProjectState(db, project)
+          const s = newSeed()
+          await db.collection('raffle_state').updateOne(
+            { _id: projectStateId(slug) },
+            {
+              $set: {
+                systemStatus: 'running',
+                nextRoundEndsAt: new Date(Date.now() + (project.intervalMs || ROUND_INTERVAL_MS)),
+                startedAt: new Date(),
+                seed: s,
+                seedCommit: sha256hex(s),
+              },
+              $inc: { roundNumber: 1 },
+            }
+          )
+          const st = await db.collection('raffle_state').findOne({ _id: projectStateId(slug) })
+          return NextResponse.json({
+            ok: true,
+            systemStatus: st.systemStatus,
+            roundNumber: st.roundNumber,
+            nextRoundEndsAt: st.nextRoundEndsAt,
+            seedCommit: st.seedCommit,
+          })
+        }
+
+        if (action === 'reset') {
+          await db.collection('winners').deleteMany({ projectSlug: slug })
+          const s = newSeed()
+          await db.collection('raffle_state').updateOne(
+            { _id: projectStateId(slug) },
+            {
+              $set: {
+                projectSlug: slug,
+                systemStatus: 'stopped',
+                nextRoundEndsAt: null,
+                roundNumber: 0,
+                startedAt: null,
+                seed: s,
+                seedCommit: sha256hex(s),
+              },
+            },
+            { upsert: true }
+          )
+          return NextResponse.json({ ok: true, systemStatus: 'stopped' })
+        }
+
+        if (action === 'winners') {
+          const winners = await db
+            .collection('winners')
+            .find({ projectSlug: slug }, { projection: { _id: 0 } })
+            .sort({ endedAt: -1 })
+            .limit(200)
+            .toArray()
+          return NextResponse.json({ winners })
+        }
+
+        const body = await request.json().catch(() => ({}))
+        if (action === 'mark-paid') {
+          const winnerId = body.winnerId
+          const txHash = body.txHash ? String(body.txHash).trim() : null
+          if (!winnerId) {
+            return NextResponse.json({ error: 'winnerId required' }, { status: 400 })
+          }
+          const res = await db.collection('winners').findOneAndUpdate(
+            { id: winnerId, projectSlug: slug },
+            { $set: { paid: true, paidAt: new Date(), txHash } },
+            { returnDocument: 'after' }
+          )
+          const doc = res && (res.value || res)
+          if (!doc || !doc.id) {
+            return NextResponse.json({ error: 'winner not found' }, { status: 404 })
+          }
+          const { _id, ...rest } = doc
+          return NextResponse.json({ ok: true, winner: rest })
+        }
+
+        if (action === 'unmark-paid') {
+          const winnerId = body.winnerId
+          if (!winnerId) {
+            return NextResponse.json({ error: 'winnerId required' }, { status: 400 })
+          }
+          await db.collection('winners').updateOne(
+            { id: winnerId, projectSlug: slug },
+            { $set: { paid: false, paidAt: null, txHash: null } }
+          )
+          return NextResponse.json({ ok: true })
+        }
+
+        if (action === 'set-deposit-tx') {
+          const tx = body.depositTx ? String(body.depositTx).trim() : null
+          await db.collection('projects').updateOne(
+            { slug },
+            { $set: { depositTx: tx } }
+          )
+          return NextResponse.json({ ok: true, depositTx: tx })
+        }
       }
     }
 
