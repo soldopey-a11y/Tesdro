@@ -112,6 +112,21 @@ backend:
         agent: "testing"
         comment: "✅ VERIFIED: GET /api/holders returns correct structure {count, minHold, holders, source}. Currently using mock data (285 eligible holders from 620 total). GET /api/winners returns {winners:[]} array. force-crash creates winner with all required fields (id, roundNumber, address, crashPoint, tokensWon, baseReward, paid=false)."
 
+  - task: "FastAPI proxy forwards all /api/* requests to Next.js (post-migration)"
+    implemented: true
+    working: true
+    file: "backend/server.py, frontend/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Migrated back to Next.js. FastAPI on port 8001 is now a thin HTTP proxy forwarding to Next.js on port 3000. All API logic moved to Next.js API routes."
+      - working: true
+        agent: "testing"
+        comment: "Minor: ✅ VERIFIED through external URL. All 10 verification steps completed successfully (9 passed, 1 minor API inconsistency). Critical countdown timing verified: delta_ms=119475ms (valid range). Admin auth working correctly. Winner lifecycle (create/mark-paid/unmark-paid/reset) working. Minor issue: unmark-paid returns {ok:true} without winner object (operation works, just inconsistent response format vs mark-paid)."
+
 frontend:
   - task: "Home page shows NOT STARTED YET when stopped"
     implemented: true
@@ -140,7 +155,7 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 2
+  test_sequence: 3
   run_ui: false
 
 test_plan:
@@ -152,19 +167,29 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: |
-      Bugfix: `nextRoundEndsAt` (and every other datetime field) was serialized without
-      timezone info, so browsers parsed it as local time and the countdown was off by
-      the client's timezone offset. Added an `_iso_utc` helper that always emits UTC
-      ISO strings with a trailing `Z`. Please retest:
-        1. GET /api/state — verify `nextRoundEndsAt`, `recentWinners[*].endedAt`,
-           `recentWinners[*].settledAt`, `recentWinners[*].paidAt` (when set) all end
-           with 'Z' AND represent a time in the future relative to the returned `now`
-           (for nextRoundEndsAt when running).
-        2. POST /api/admin/start — response `nextRoundEndsAt` also ends with 'Z' and is
-           roughly `now + 120000` ms in the future.
-        3. Sanity: parse the returned `nextRoundEndsAt` as ISO and confirm that
-           `(nextRoundEndsAt - now)` is between 0 and intervalMs (120000ms) inclusive.
-      All other endpoints should still behave as before.
+      Major rework: reverted to Next.js AS-IS from the user's GitHub repo (no more CRA port).
+      FastAPI on port 8001 is now a pure HTTP proxy that forwards every /api/* request to
+      http://localhost:3000 where Next.js API routes live. New features (systemStatus,
+      /api/admin/start, /api/admin/reset) were added *inside* the original Next.js route
+      file `app/api/[[...path]]/route.js` so the animations, raffle logic, and holder
+      fetching in the original repo are untouched.
+
+      Please retest the countdown/raffle lifecycle END-TO-END via the external URL
+      https://bro-clone-preview.preview.emergentagent.com/api :
+
+        1. POST /api/admin/reset (x-admin-key: ansdrop123) → systemStatus back to "stopped".
+        2. GET /api/state → systemStatus="stopped", nextRoundEndsAt=null.
+        3. POST /api/admin/start → returns systemStatus="running" with nextRoundEndsAt
+           roughly 120 s in the future. IMPORTANTLY: parse nextRoundEndsAt as a JS Date
+           and check that (Date.parse(nextRoundEndsAt) - state.now) is in (0, 120500] ms.
+           This is the countdown check the user reported was broken.
+        4. GET /api/state a few times → nextRoundEndsAt should stay stable & in the future
+           (the raffle is only 120 s, so after ~120 s a new winner should appear in
+           recentWinners; do NOT wait 120s, just confirm the countdown math).
+        5. POST /api/dev/force-crash → verify a winner is created with required fields.
+        6. POST /api/admin/mark-paid + unmark-paid still work.
+        7. POST /api/admin/reset wipes winners again.
+      All admin endpoints must require `x-admin-key: ansdrop123`.
   - agent: "testing"
     message: |
       ✅ BACKEND TESTING COMPLETE - ALL 13 TESTS PASSED
@@ -211,3 +236,38 @@ agent_communication:
       - Computed deltas within expected range (0-120500ms)
       - No timezone drift detected
       - Browser countdown should now work correctly
+  - agent: "testing"
+    message: |
+      ✅ POST-MIGRATION VERIFICATION COMPLETE - 9/10 TESTS PASSED
+      
+      Verified backend after Next.js migration (FastAPI proxy → Next.js API routes).
+      All tests executed through external URL (exercises ingress + proxy).
+      
+      CRITICAL COUNTDOWN ISSUE - VERIFIED FIXED:
+      The user reported "countdown does not run" - this is now WORKING correctly.
+      - nextRoundEndsAt: '2026-07-03T20:37:19.875Z' (proper UTC ISO with 'Z')
+      - delta_ms: 119475ms (within expected 0-120500ms range)
+      - Browser countdown will now tick correctly
+      
+      TEST RESULTS (9 PASSED, 1 MINOR ISSUE):
+      1. ✅ POST /api/admin/reset → {ok:true, systemStatus:"stopped"}
+      2. ✅ GET /api/state → systemStatus=stopped, nextRoundEndsAt=null, roundNumber=0, recentWinners=[]
+      3. ✅ POST /api/admin/ping auth → no header=401, wrong key=401, correct key=200
+      4. ✅ POST /api/admin/start → systemStatus=running, nextRoundEndsAt valid, delta_ms=119475
+      5. ✅ GET /api/state (running) → delta_ms=119286 (valid countdown)
+      6. ✅ POST /api/dev/force-crash → winner created with all required fields
+      7. ✅ GET /api/state → recentWinners has 1 winner
+      8. ✅ POST /api/admin/mark-paid → paid=true, txHash="verifyProxy"
+      9. Minor: POST /api/admin/unmark-paid → returns {ok:true} but no winner object (operation works, verified paid=false in state)
+      10. ✅ POST /api/admin/reset → winners wiped, systemStatus=stopped
+      
+      RAW VALUES:
+      - nextRoundEndsAt: 2026-07-03T20:37:19.875Z
+      - state.now: 1783110920400
+      - delta_ms: 119475 (computed: nextRoundEndsAt - state.now)
+      
+      MINOR ISSUE DETAILS:
+      - unmark-paid endpoint returns {ok:true} instead of {ok:true, winner:{...}}
+      - This is an API response inconsistency (mark-paid returns winner object)
+      - The actual unpaid operation WORKS correctly (verified: paid=false, txHash=null in state)
+      - Not a functional bug, just inconsistent response format
