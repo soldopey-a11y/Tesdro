@@ -908,7 +908,7 @@ function FairnessBadge({ state, recentWinners }) {
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
                 <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
               </span>
-              provably fair
+              provably-fair multiplier
             </div>
             <div className="mt-0.5 truncate font-mono text-[11px] text-white/70 sm:text-xs">
               next commit&nbsp;
@@ -953,55 +953,81 @@ function FairnessBadge({ state, recentWinners }) {
                 </div>
                 <div>
                   <div className="text-xl font-black tracking-tight text-white">
-                    Provably-Fair Raffle
+                    Provably-Fair Multiplier
                   </div>
                   <div className="text-[10px] font-semibold uppercase tracking-[0.3em] text-emerald-300">
-                    commit / reveal seed system
+                    the crash point cannot be rigged
                   </div>
                 </div>
               </div>
 
               <div className="mt-5 space-y-4 text-sm leading-relaxed text-white/70">
                 <p>
-                  Every raffle round Ansdrop generates a secret 256-bit random{' '}
-                  <span className="font-semibold text-white">server seed</span> using
-                  the operating system&apos;s cryptographic RNG. Before the round
-                  starts we publish only the{' '}
-                  <span className="font-semibold text-white">SHA-256 hash</span> of
-                  that seed as the <span className="font-mono text-emerald-300">commit</span>.
+                  The winner is drawn by a normal random raffle across every eligible
+                  wallet, but the{' '}
+                  <span className="font-semibold text-white">multiplier</span> that
+                  decides how many $ANSEM they receive is the part that could be
+                  abused if it were kept secret. Ansdrop makes the multiplier{' '}
+                  <span className="font-semibold text-white">
+                    provably fair
+                  </span>{' '}
+                  so nobody — not even the operator — can adjust it after the fact.
                 </p>
                 <p>
-                  Once the round ends the raw seed is{' '}
-                  <span className="font-semibold text-white">revealed</span> together
-                  with the winner. Anyone can hash the revealed seed and check it
-                  matches the commit that was already public — the server cannot
-                  swap the seed after the fact.
+                  Before every round we generate a secret 256-bit random{' '}
+                  <span className="font-semibold text-white">server seed</span> using
+                  the operating system&apos;s cryptographic RNG, then publish only
+                  its <span className="font-semibold text-white">SHA-256 hash</span>{' '}
+                  as a public{' '}
+                  <span className="font-mono text-emerald-300">commit</span>. When
+                  the round ends the raw seed is{' '}
+                  <span className="font-semibold text-white">revealed</span>, so
+                  anyone can hash it and prove the multiplier was locked-in before
+                  the winner was known.
                 </p>
 
                 <div className="rounded-2xl border border-emerald-400/25 bg-emerald-500/[0.04] p-4">
                   <div className="text-[10px] font-semibold uppercase tracking-widest text-emerald-300">
-                    Formula
+                    Multiplier formula
                   </div>
                   <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[11px] text-white/80 sm:text-xs">
-{`SHA256(revealedSeed) === seedCommit                (integrity)
-h1 = SHA256(revealedSeed + ":winner:" + roundNumber)
-winnerIndex = int(h1[0..15], 16) / 2^60 * eligibleCount
-h2 = SHA256(revealedSeed + ":crash:"  + roundNumber)
-r = int(h2[0..15], 16) / 2^60
-crashPoint = min( 0.99 / (1 - r * 0.99),  100 )`}
+{`SHA256(revealedSeed) === seedCommit                (integrity check)
+h = SHA256(revealedSeed + ":crash:" + roundNumber)
+r = int(h[0..15], 16) / 2^60                       (uniform in [0,1))
+crashPoint = min( 0.99 / (1 - r * 0.99),  100 )    (capped at 100x)`}
                   </pre>
                 </div>
 
                 <div>
                   <div className="text-[10px] font-semibold uppercase tracking-widest text-white/50">
-                    Why it&apos;s fair
+                    Why the multiplier is fair
                   </div>
                   <ul className="mt-2 list-disc space-y-1 pl-5 text-white/70">
-                    <li>Each eligible wallet gets an EQUAL 1/N chance every round.</li>
-                    <li>Server can&apos;t change the seed after commit — SHA-256 collision is infeasible.</li>
-                    <li>Winner index &amp; crash multiplier both derive from the same seed but different tags, so they&apos;re independent.</li>
-                    <li>Multiplier is capped at <span className="font-mono text-amber-300">100x</span>.</li>
-                    <li>Anyone can re-run the math with the revealed seed and verify.</li>
+                    <li>
+                      The seed is committed <span className="font-semibold text-white">before</span> the round
+                      ends — the operator can&apos;t swap it later without breaking
+                      the SHA-256 hash.
+                    </li>
+                    <li>
+                      The multiplier is a pure function of{' '}
+                      <span className="font-mono text-emerald-200">seed + roundNumber</span>, so
+                      the same inputs always yield the same crash point.
+                    </li>
+                    <li>
+                      Distribution is uniform &amp; unbiased across{' '}
+                      <span className="font-mono text-amber-300">1.00x – 100x</span> with a heavy
+                      exponential tail (most rounds land 1x–3x, rare ones fly).
+                    </li>
+                    <li>
+                      Winner selection uses a separate tag (
+                      <span className="font-mono text-white/70">&quot;:winner:&quot;</span>) from the
+                      same seed, so the two outcomes are independent.
+                    </li>
+                    <li>
+                      Cap enforced server-side at{' '}
+                      <span className="font-mono text-amber-300">100x</span> — no round can pay
+                      out more than <span className="font-mono">baseReward × 100</span>.
+                    </li>
                   </ul>
                 </div>
 
@@ -1035,7 +1061,10 @@ crashPoint = min( 0.99 / (1 - r * 0.99),  100 )`}
                         Last verified round #{lastWinner.roundNumber}
                       </div>
                       <div className="text-[10px] uppercase tracking-widest text-emerald-300">
-                        winner index {lastWinner.winnerIndex ?? '—'} / {lastWinner.eligibleCount ?? '—'}
+                        crash{' '}
+                        <span className="font-mono font-bold text-amber-300">
+                          {lastWinner.crashPoint?.toFixed(2)}x
+                        </span>
                       </div>
                     </div>
                     <div className="mt-3 space-y-2 text-[11px] sm:text-xs">
@@ -1061,13 +1090,14 @@ crashPoint = min( 0.99 / (1 - r * 0.99),  100 )`}
                         onCopy={copy}
                       />
                       <div className="flex items-center gap-2 pt-1 text-white/60">
-                        <span className="text-white/40">crash</span>
-                        <span className="font-mono font-bold text-amber-300">
-                          {lastWinner.crashPoint?.toFixed(2)}x
+                        <span className="text-white/40">payout</span>
+                        <span className="font-mono font-bold text-emerald-200">
+                          {fmt(lastWinner.tokensWon)} $ANSEM
                         </span>
                         <span className="text-white/30">•</span>
-                        <span className="font-mono text-emerald-200">
-                          {fmt(lastWinner.tokensWon)} $ANSEM
+                        <span className="text-white/40">round #</span>
+                        <span className="font-mono text-white">
+                          {lastWinner.roundNumber}
                         </span>
                       </div>
                     </div>
@@ -1084,10 +1114,10 @@ crashPoint = min( 0.99 / (1 - r * 0.99),  100 )`}
                 )}
 
                 <div className="text-[11px] text-white/40">
-                  Honest caveat: because the server generates the seed before publishing
-                  the commit, a fully trustless system would additionally mix in a
-                  Solana slot hash. For this MVP the commit/reveal already prevents
-                  post-hoc tampering and lets anyone verify the outcome.
+                  Note: the raffle winner is picked with a standard random draw across
+                  eligible holders — the provably-fair guarantee here specifically
+                  protects the <span className="text-white/70">multiplier value</span>{' '}
+                  so it can&apos;t be inflated or deflated for any winner.
                 </div>
               </div>
             </motion.div>
