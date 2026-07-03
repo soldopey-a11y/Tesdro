@@ -232,7 +232,7 @@ function PaidBadge({ paid, txHash, compact = false }) {
           compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]'
         }`}
       >
-        <Check className={compact ? 'h-2.5 w-2.5' : 'h-3 w-3'} /> Paid
+        <Check className={compact ? 'h-2.5 w-2.5' : 'h-3 w-3'} /> Dropped
       </span>
     )
     return solscan ? (

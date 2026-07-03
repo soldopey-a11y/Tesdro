@@ -158,7 +158,7 @@ export default function AdminPage() {
   }
 
   async function unmarkPaid(winnerId) {
-    if (!confirm('Unmark this winner as paid?')) return
+    if (!confirm('Unmark this winner as dropped?')) return
     setBusyId(winnerId)
     try {
       const r = await fetch('/api/admin/unmark-paid', {
@@ -335,7 +335,7 @@ export default function AdminPage() {
             <div className="mt-1 font-mono text-2xl font-black text-amber-200">{fmt(unpaid)}</div>
           </div>
           <div className="rounded-2xl border border-emerald-400/25 bg-emerald-500/[0.05] p-4">
-            <div className="text-[10px] uppercase tracking-widest text-emerald-300">Paid</div>
+            <div className="text-[10px] uppercase tracking-widest text-emerald-300">Dropped</div>
             <div className="mt-1 font-mono text-2xl font-black text-emerald-200">{fmt(paid)}</div>
           </div>
         </div>
@@ -404,7 +404,7 @@ export default function AdminPage() {
                   {w.paid ? (
                     <div className="flex flex-col items-stretch gap-2 sm:items-end">
                       <div className="inline-flex items-center gap-1.5 self-start rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-emerald-300 sm:self-end">
-                        <Check className="h-3 w-3" /> Paid
+                        <Check className="h-3 w-3" /> Dropped
                         {w.paidAt && (
                           <span className="ml-1 text-emerald-300/60">
                             {new Date(w.paidAt).toLocaleTimeString()}
@@ -447,7 +447,7 @@ export default function AdminPage() {
                         className="flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-cyan-500 px-3 py-2 text-xs font-bold text-white shadow-[0_0_20px_rgba(16,185,129,0.35)] hover:opacity-90 disabled:opacity-50"
                       >
                         <Check className="h-3.5 w-3.5" />
-                        {busyId === w.id ? 'Saving…' : 'Mark as Paid'}
+                        {busyId === w.id ? 'Saving…' : 'Mark as Dropped'}
                       </button>
                     </div>
                   )}
@@ -459,7 +459,7 @@ export default function AdminPage() {
 
         <div className="mt-8 rounded-2xl border border-white/10 bg-black/40 p-4 text-xs text-white/50">
           <div className="mb-1 font-semibold uppercase tracking-widest text-white/70">
-            How to mark paid
+            How to mark dropped
           </div>
           <ol className="ml-4 list-decimal space-y-1">
             <li>Copy the winner address + amount from the row above.</li>
@@ -467,10 +467,10 @@ export default function AdminPage() {
             <li>Copy the transaction signature from Solscan / your wallet history.</li>
             <li>
               Paste it into the input on the winner's row and click{' '}
-              <span className="font-semibold text-emerald-300">Mark as Paid</span>.
+              <span className="font-semibold text-emerald-300">Mark as Dropped</span>.
             </li>
             <li>
-              The <span className="font-semibold text-emerald-300">Paid</span> badge will
+              The <span className="font-semibold text-emerald-300">Dropped</span> badge will
               instantly appear on the public site.
             </li>
           </ol>
