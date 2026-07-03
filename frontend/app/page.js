@@ -161,16 +161,14 @@ function HeroCountdown({ msLeft, intervalMs, phase, systemStatus }) {
             initial={{ scale: 0.98, opacity: 0.85 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ duration: 0.25 }}
-            className={`font-mono font-black leading-none tracking-tight ${
+            className={`font-mono font-black leading-none tracking-tight text-[64px] sm:text-[104px] md:text-[128px] ${
               notStarted
-                ? 'text-[42px] sm:text-[76px] md:text-[96px] bg-gradient-to-b from-amber-200 to-amber-500 bg-clip-text text-transparent'
-                : `text-[64px] sm:text-[104px] md:text-[128px] ${
-                    running
-                      ? 'bg-gradient-to-b from-fuchsia-200 to-fuchsia-500 bg-clip-text text-transparent'
-                      : urgent
-                      ? 'bg-gradient-to-b from-rose-200 to-rose-500 bg-clip-text text-transparent'
-                      : 'bg-gradient-to-b from-white to-cyan-300 bg-clip-text text-transparent'
-                  }`
+                ? 'bg-gradient-to-b from-amber-200 to-amber-500 bg-clip-text text-transparent'
+                : running
+                ? 'bg-gradient-to-b from-fuchsia-200 to-fuchsia-500 bg-clip-text text-transparent'
+                : urgent
+                ? 'bg-gradient-to-b from-rose-200 to-rose-500 bg-clip-text text-transparent'
+                : 'bg-gradient-to-b from-white to-cyan-300 bg-clip-text text-transparent'
             }`}
             style={{
               WebkitTextStroke: '1px rgba(255,255,255,0.05)',
@@ -181,22 +179,17 @@ function HeroCountdown({ msLeft, intervalMs, phase, systemStatus }) {
                 : 'drop-shadow(0 0 22px rgba(6,182,212,0.35))',
             }}
           >
-            {notStarted ? 'NOT STARTED YET' : running ? 'LIVE' : fmtMs(msLeft)}
+            {notStarted ? '00:00' : running ? 'LIVE' : fmtMs(msLeft)}
           </motion.div>
-          {!notStarted && (
-            <div className="mt-3 h-1.5 w-full max-w-md overflow-hidden rounded-full bg-white/10">
-              <motion.div
-                className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-fuchsia-500 to-amber-400"
-                animate={{ width: running ? '100%' : `${(1 - pct) * 100}%` }}
-                transition={{ ease: 'linear', duration: 0.4 }}
-              />
-            </div>
-          )}
-          {notStarted && (
-            <div className="mt-3 max-w-md text-xs text-white/50">
-              The raffle system is currently offline. Please wait for the team to start the next round.
-            </div>
-          )}
+          <div className="mt-3 h-1.5 w-full max-w-md overflow-hidden rounded-full bg-white/10">
+            <motion.div
+              className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-fuchsia-500 to-amber-400"
+              animate={{
+                width: notStarted ? '0%' : running ? '100%' : `${(1 - pct) * 100}%`,
+              }}
+              transition={{ ease: 'linear', duration: 0.4 }}
+            />
+          </div>
         </div>
       </div>
     </div>
