@@ -96,12 +96,6 @@ function Header({ state }) {
         </div>
 
         <div className="flex items-center gap-2">
-          <Link href="/discover" className="hidden items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70 hover:bg-white/10 hover:text-white sm:flex">
-            Discover
-          </Link>
-          <Link href="/create" className="hidden items-center gap-1.5 rounded-full border border-fuchsia-400/30 bg-fuchsia-500/10 px-3 py-1 text-xs font-semibold text-fuchsia-200 hover:bg-fuchsia-500/20 md:flex">
-            <Heart className="h-3 w-3" /> Support
-          </Link>
           <div className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-widest sm:text-xs ${running ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-300' : 'border-white/15 bg-white/5 text-white/50'}`}>
             <span className="relative flex h-1.5 w-1.5">
               {running && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>}
@@ -1149,6 +1143,314 @@ function Row({ label, value, tag, copied, onCopy }) {
   )
 }
 
+// ---------- Support Community badge ----------
+function SupportCommunityBadge() {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className="mt-4 flex w-full items-center justify-between gap-3 rounded-2xl border border-fuchsia-400/30 bg-gradient-to-r from-fuchsia-500/[0.08] via-pink-500/[0.05] to-transparent px-4 py-3 text-left backdrop-blur-md transition hover:border-fuchsia-400/50 hover:bg-fuchsia-500/[0.10] sm:mt-5"
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-fuchsia-400/40 bg-fuchsia-500/10">
+            <Heart className="h-4 w-4 text-fuchsia-300" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.3em] text-fuchsia-300">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-fuchsia-400 opacity-70" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-fuchsia-400" />
+              </span>
+              support a community
+            </div>
+            <div className="mt-0.5 truncate text-[11px] text-white/70 sm:text-xs">
+              run a fair-multiplier drop for any Solana token
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-fuchsia-300/70">
+          how it works <ArrowRight className="h-3 w-3" />
+        </div>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm px-4 py-6"
+            onClick={() => setOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 10 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 10 }}
+              transition={{ type: 'spring', stiffness: 220, damping: 22 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-fuchsia-400/30 bg-gradient-to-br from-slate-950 via-black to-slate-950 p-6 shadow-[0_0_80px_rgba(217,70,239,0.2)] sm:p-8"
+            >
+              <button
+                onClick={() => setOpen(false)}
+                className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 hover:bg-white/10 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-fuchsia-400/40 bg-gradient-to-br from-fuchsia-500/20 to-cyan-500/20">
+                  <Heart className="h-5 w-5 text-fuchsia-300" />
+                </div>
+                <div>
+                  <div className="text-xl font-black tracking-tight text-white">
+                    Support a Community
+                  </div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.3em] text-fuchsia-300">
+                    donate tokens • run a fair drop
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-4 text-sm leading-relaxed text-white/70">
+                <p>
+                  Ansdrop lets anyone run a fair-multiplier airdrop for their
+                  favorite Solana community. Donate your tokens, and the raffle
+                  engine will pick a random holder every round with a provably-fair
+                  crash multiplier — same mechanic that powers this $ANSEM page.
+                </p>
+
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <StepCard
+                    n={1}
+                    icon={Wallet}
+                    title="Fill the form"
+                    body="Community name, ticker, mint, min hold, base reward — takes 30 seconds."
+                    tone="text-cyan-300 border-cyan-400/30"
+                  />
+                  <StepCard
+                    n={2}
+                    icon={Coins}
+                    title="Deposit tokens"
+                    body="Send the pool to Ansdrop's wallet. You control how much to donate."
+                    tone="text-fuchsia-300 border-fuchsia-400/30"
+                  />
+                  <StepCard
+                    n={3}
+                    icon={Sparkles}
+                    title="Community wins"
+                    body="Every round, one holder receives base × multiplier of your token."
+                    tone="text-amber-300 border-amber-400/30"
+                  />
+                </div>
+
+                <div className="rounded-2xl border border-fuchsia-400/25 bg-fuchsia-500/[0.04] p-4">
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-fuchsia-300">
+                    Zero platform fee
+                  </div>
+                  <div className="mt-1 text-[13px] text-white/70">
+                    Ansdrop doesn&apos;t take a cut. Every token you deposit goes
+                    straight to community holders. Optional tips to keep Ansdrop
+                    running are welcome but never required.
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-white/50">
+                    What you get
+                  </div>
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-white/70">
+                    <li>Your own public drop page at <span className="font-mono text-cyan-300">/drops/[slug]</span> to share with your community</li>
+                    <li>A supporter dashboard to Start / Reset / mark payouts</li>
+                    <li>Provably-fair multiplier so nobody can rig the outcome</li>
+                    <li>Zero platform fee — 100% of the pool goes to holders</li>
+                  </ul>
+                </div>
+              </div>
+
+              <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+                <Link
+                  href="/create"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-fuchsia-500 to-cyan-500 px-4 py-3 text-sm font-bold text-white shadow-[0_0_30px_rgba(217,70,239,0.35)] transition hover:opacity-90"
+                >
+                  <Heart className="h-4 w-4" /> Open support form
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+                <button
+                  onClick={() => setOpen(false)}
+                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white/80 hover:bg-white/10"
+                >
+                  Maybe later
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  )
+}
+
+function StepCard({ n, icon: Icon, title, body, tone }) {
+  return (
+    <div className={`rounded-xl border bg-black/40 p-3 ${tone}`}>
+      <div className="flex items-center gap-2">
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-black/40">
+          <Icon className="h-3.5 w-3.5" />
+        </div>
+        <div className="text-[9px] font-semibold uppercase tracking-widest text-white/50">
+          step {n}
+        </div>
+      </div>
+      <div className="mt-2 text-sm font-bold text-white">{title}</div>
+      <div className="mt-0.5 text-[11px] leading-relaxed text-white/55">{body}</div>
+    </div>
+  )
+}
+
+// ---------- Community Drops section ----------
+function CommunityDropsSection() {
+  const [projects, setProjects] = useState(null)
+
+  useEffect(() => {
+    let alive = true
+    fetch('/api/projects')
+      .then((r) => r.json())
+      .then((d) => {
+        if (alive) setProjects(d.projects || [])
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const many = projects && projects.length > 3
+
+  return (
+    <section className="mt-12 sm:mt-16">
+      <div className="mb-5 flex items-end justify-between">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.3em] text-white/50 sm:text-xs">
+            supported communities
+          </div>
+          <h2 className="mt-1 text-xl font-black text-white sm:text-2xl">
+            Community Drops
+          </h2>
+        </div>
+        {projects && projects.length > 0 && (
+          <Link
+            href="/discover"
+            className="text-[11px] font-semibold uppercase tracking-widest text-cyan-300 hover:text-cyan-200"
+          >
+            view all →
+          </Link>
+        )}
+      </div>
+
+      {projects === null && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-32 animate-pulse rounded-2xl border border-white/10 bg-white/[0.03]" />
+          ))}
+        </div>
+      )}
+
+      {projects && projects.length === 0 && (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-8 text-center text-sm text-white/50">
+          Not supported yet — be the first to run a community drop.
+        </div>
+      )}
+
+      {projects && projects.length > 0 && !many && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          {projects.map((p) => (
+            <CommunityCard key={p.slug} p={p} />
+          ))}
+        </div>
+      )}
+
+      {projects && many && <CommunityMarquee projects={projects} />}
+    </section>
+  )
+}
+
+function CommunityCard({ p }) {
+  return (
+    <Link
+      href={`/drops/${p.slug}`}
+      className="group flex h-full flex-col justify-between rounded-2xl border border-white/10 bg-white/[0.03] p-4 backdrop-blur-md transition hover:border-fuchsia-400/40 hover:bg-white/[0.06]"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[9px] font-semibold uppercase tracking-widest text-fuchsia-300">
+            community drop
+          </div>
+          <div className="mt-1 truncate text-base font-black tracking-tight text-white">
+            {p.name}
+          </div>
+          <div className="font-mono text-[11px] text-cyan-300">${p.ticker}</div>
+        </div>
+        <div className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-widest text-emerald-300">
+          live
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
+        <div className="rounded-lg bg-black/40 p-2">
+          <div className="text-[9px] uppercase tracking-widest text-white/40">base</div>
+          <div className="font-mono text-sm font-bold text-amber-200">{fmt(p.baseReward)}</div>
+        </div>
+        <div className="rounded-lg bg-black/40 p-2">
+          <div className="text-[9px] uppercase tracking-widest text-white/40">min hold</div>
+          <div className="font-mono text-sm font-bold text-cyan-200">{fmt(p.minHold)}</div>
+        </div>
+      </div>
+    </Link>
+  )
+}
+
+function CommunityMarquee({ projects }) {
+  // Duplicate list so the marquee loops seamlessly
+  const loop = [...projects, ...projects]
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-black/30 py-4 [mask-image:linear-gradient(to_right,transparent,black_8%,black_92%,transparent)]">
+      <motion.div
+        className="flex w-max gap-3 px-4"
+        animate={{ x: ['0%', '-50%'] }}
+        transition={{
+          duration: Math.max(16, projects.length * 4),
+          ease: 'linear',
+          repeat: Infinity,
+        }}
+      >
+        {loop.map((p, i) => (
+          <Link
+            key={p.slug + '-' + i}
+            href={`/drops/${p.slug}`}
+            className="group flex w-64 shrink-0 items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 backdrop-blur-md transition hover:border-fuchsia-400/40 hover:bg-white/[0.06]"
+          >
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-cyan-500/25 to-fuchsia-500/25 font-mono text-sm font-black text-white">
+              {p.ticker?.[0] || '?'}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-bold text-white">{p.name}</div>
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono text-[11px] text-cyan-300">${p.ticker}</span>
+                <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-1.5 py-0 text-[8px] font-bold uppercase tracking-widest text-emerald-300">
+                  live
+                </span>
+              </div>
+              <div className="mt-0.5 font-mono text-[10px] text-amber-200">
+                {fmt(p.baseReward)} base
+              </div>
+            </div>
+          </Link>
+        ))}
+      </motion.div>
+    </div>
+  )
+}
+
 // ---------- Main page ----------
 function App() {
   const [msLeft, setMsLeft] = useState(0)
@@ -1285,6 +1587,12 @@ function App() {
 
         {/* Provably-Fair badge */}
         <FairnessBadge state={state} recentWinners={state?.recentWinners || []} />
+
+        {/* Support-a-community badge */}
+        <SupportCommunityBadge />
+
+        {/* Community Drops (discover section) */}
+        <CommunityDropsSection />
 
         {/* STATS */}
         <div className="mt-4 grid grid-cols-2 gap-2.5 sm:mt-5 sm:grid-cols-4 sm:gap-3">
