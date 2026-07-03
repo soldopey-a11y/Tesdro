@@ -20,6 +20,9 @@ import {
   Check,
   Flame,
   Target,
+  Lock,
+  X,
+  ExternalLink,
   Zap as ZapIcon,
 } from 'lucide-react'
 
@@ -874,6 +877,250 @@ function About({ state }) {
   )
 }
 
+// ---------- Provably-Fair Badge ----------
+function FairnessBadge({ state, recentWinners }) {
+  const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState('')
+  const commit = state?.seedCommit
+  const lastWinner = recentWinners?.[0]
+
+  const copy = (val, tag) => {
+    if (typeof navigator === 'undefined' || !val) return
+    navigator.clipboard?.writeText(val).then(() => {
+      setCopied(tag)
+      setTimeout(() => setCopied(''), 1400)
+    })
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className="mt-4 flex w-full items-center justify-between gap-3 rounded-2xl border border-emerald-400/30 bg-gradient-to-r from-emerald-500/[0.06] via-cyan-500/[0.05] to-transparent px-4 py-3 text-left backdrop-blur-md transition hover:border-emerald-400/50 hover:bg-emerald-500/[0.10] sm:mt-5"
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-400/40 bg-emerald-500/10">
+            <Lock className="h-4 w-4 text-emerald-300" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.3em] text-emerald-300">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              </span>
+              provably fair
+            </div>
+            <div className="mt-0.5 truncate font-mono text-[11px] text-white/70 sm:text-xs">
+              next commit&nbsp;
+              <span className="text-emerald-200">
+                {commit ? commit.slice(0, 10) + '…' + commit.slice(-8) : '—'}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-emerald-300/70">
+          how it works <ArrowRight className="h-3 w-3" />
+        </div>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm px-4 py-6"
+            onClick={() => setOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 10 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 10 }}
+              transition={{ type: 'spring', stiffness: 220, damping: 22 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-emerald-400/30 bg-gradient-to-br from-slate-950 via-black to-slate-950 p-6 shadow-[0_0_80px_rgba(16,185,129,0.2)] sm:p-8"
+            >
+              <button
+                onClick={() => setOpen(false)}
+                className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 hover:bg-white/10 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-emerald-400/40 bg-emerald-500/10">
+                  <ShieldCheck className="h-5 w-5 text-emerald-300" />
+                </div>
+                <div>
+                  <div className="text-xl font-black tracking-tight text-white">
+                    Provably-Fair Raffle
+                  </div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.3em] text-emerald-300">
+                    commit / reveal seed system
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-4 text-sm leading-relaxed text-white/70">
+                <p>
+                  Every raffle round Ansdrop generates a secret 256-bit random{' '}
+                  <span className="font-semibold text-white">server seed</span> using
+                  the operating system&apos;s cryptographic RNG. Before the round
+                  starts we publish only the{' '}
+                  <span className="font-semibold text-white">SHA-256 hash</span> of
+                  that seed as the <span className="font-mono text-emerald-300">commit</span>.
+                </p>
+                <p>
+                  Once the round ends the raw seed is{' '}
+                  <span className="font-semibold text-white">revealed</span> together
+                  with the winner. Anyone can hash the revealed seed and check it
+                  matches the commit that was already public — the server cannot
+                  swap the seed after the fact.
+                </p>
+
+                <div className="rounded-2xl border border-emerald-400/25 bg-emerald-500/[0.04] p-4">
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-emerald-300">
+                    Formula
+                  </div>
+                  <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[11px] text-white/80 sm:text-xs">
+{`SHA256(revealedSeed) === seedCommit                (integrity)
+h1 = SHA256(revealedSeed + ":winner:" + roundNumber)
+winnerIndex = int(h1[0..15], 16) / 2^60 * eligibleCount
+h2 = SHA256(revealedSeed + ":crash:"  + roundNumber)
+r = int(h2[0..15], 16) / 2^60
+crashPoint = min( 0.99 / (1 - r * 0.99),  100 )`}
+                  </pre>
+                </div>
+
+                <div>
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-white/50">
+                    Why it&apos;s fair
+                  </div>
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-white/70">
+                    <li>Each eligible wallet gets an EQUAL 1/N chance every round.</li>
+                    <li>Server can&apos;t change the seed after commit — SHA-256 collision is infeasible.</li>
+                    <li>Winner index &amp; crash multiplier both derive from the same seed but different tags, so they&apos;re independent.</li>
+                    <li>Multiplier is capped at <span className="font-mono text-amber-300">100x</span>.</li>
+                    <li>Anyone can re-run the math with the revealed seed and verify.</li>
+                  </ul>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-white/50">
+                    Current commit (next round)
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="break-all font-mono text-[11px] text-emerald-200 sm:text-xs">
+                      {commit || '—'}
+                    </div>
+                    {commit && (
+                      <button
+                        onClick={() => copy(commit, 'commit')}
+                        className="shrink-0 rounded p-1 text-white/50 hover:bg-white/5 hover:text-white"
+                      >
+                        {copied === 'commit' ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-300" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {lastWinner?.revealedSeed && (
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="text-[10px] font-semibold uppercase tracking-widest text-white/50">
+                        Last verified round #{lastWinner.roundNumber}
+                      </div>
+                      <div className="text-[10px] uppercase tracking-widest text-emerald-300">
+                        winner index {lastWinner.winnerIndex ?? '—'} / {lastWinner.eligibleCount ?? '—'}
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-2 text-[11px] sm:text-xs">
+                      <Row
+                        label="commit"
+                        value={lastWinner.seedCommit}
+                        tag="lc"
+                        copied={copied}
+                        onCopy={copy}
+                      />
+                      <Row
+                        label="revealed seed"
+                        value={lastWinner.revealedSeed}
+                        tag="lr"
+                        copied={copied}
+                        onCopy={copy}
+                      />
+                      <Row
+                        label="winner"
+                        value={lastWinner.address}
+                        tag="lw"
+                        copied={copied}
+                        onCopy={copy}
+                      />
+                      <div className="flex items-center gap-2 pt-1 text-white/60">
+                        <span className="text-white/40">crash</span>
+                        <span className="font-mono font-bold text-amber-300">
+                          {lastWinner.crashPoint?.toFixed(2)}x
+                        </span>
+                        <span className="text-white/30">•</span>
+                        <span className="font-mono text-emerald-200">
+                          {fmt(lastWinner.tokensWon)} $ANSEM
+                        </span>
+                      </div>
+                    </div>
+                    <a
+                      href="https://emn178.github.io/online-tools/sha256.html"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-semibold text-cyan-300 hover:underline"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      Verify SHA-256 yourself
+                    </a>
+                  </div>
+                )}
+
+                <div className="text-[11px] text-white/40">
+                  Honest caveat: because the server generates the seed before publishing
+                  the commit, a fully trustless system would additionally mix in a
+                  Solana slot hash. For this MVP the commit/reveal already prevents
+                  post-hoc tampering and lets anyone verify the outcome.
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  )
+}
+
+function Row({ label, value, tag, copied, onCopy }) {
+  return (
+    <div className="flex items-start gap-2">
+      <div className="w-24 shrink-0 text-white/40">{label}</div>
+      <div className="min-w-0 flex-1 break-all font-mono text-white/80">
+        {value || '—'}
+      </div>
+      {value && (
+        <button
+          onClick={() => onCopy(value, tag)}
+          className="shrink-0 rounded p-0.5 text-white/50 hover:bg-white/5 hover:text-white"
+        >
+          {copied === tag ? (
+            <Check className="h-3 w-3 text-emerald-300" />
+          ) : (
+            <Copy className="h-3 w-3" />
+          )}
+        </button>
+      )}
+    </div>
+  )
+}
+
 // ---------- Main page ----------
 function App() {
   const [msLeft, setMsLeft] = useState(0)
@@ -1007,6 +1254,9 @@ function App() {
           phase={phase}
           systemStatus={systemStatus}
         />
+
+        {/* Provably-Fair badge */}
+        <FairnessBadge state={state} recentWinners={state?.recentWinners || []} />
 
         {/* STATS */}
         <div className="mt-4 grid grid-cols-2 gap-2.5 sm:mt-5 sm:grid-cols-4 sm:gap-3">
