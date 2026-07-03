@@ -264,17 +264,30 @@ async def _try_advance_round() -> Optional[dict]:
     }
     await db.winners.insert_one(dict(winner_doc))
     winner_doc.pop("_id", None)
-    return winner_doc
+    return _serialize(winner_doc)
+
+
+def _iso_utc(dt: datetime) -> str:
+    """ISO-8601 string with an explicit UTC 'Z' suffix.
+
+    MongoDB / BSON stores datetimes as naive UTC. If we emit them with
+    ``.isoformat()`` directly the client-side ``new Date(...)`` parses them as
+    LOCAL time, which throws the countdown off by the browser's timezone
+    offset. Always emit UTC-aware ISO strings.
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _serialize(doc: dict) -> dict:
-    """Strip _id and convert datetimes to isoformat for JSON responses."""
+    """Strip _id and convert datetimes to UTC isoformat for JSON responses."""
     out = {}
     for k, v in doc.items():
         if k == "_id":
             continue
         if isinstance(v, datetime):
-            out[k] = v.isoformat()
+            out[k] = _iso_utc(v)
         else:
             out[k] = v
     return out
@@ -326,7 +339,7 @@ async def get_state():
         "minEligibleHold": MIN_ELIGIBLE_HOLD,
         "intervalMs": RAFFLE_INTERVAL_MS,
         "now": int(datetime.now(timezone.utc).timestamp() * 1000),
-        "nextRoundEndsAt": nre.isoformat() if isinstance(nre, datetime) else nre,
+        "nextRoundEndsAt": _iso_utc(nre) if isinstance(nre, datetime) else nre,
         "roundNumber": st.get("roundNumber", 0),
         "eligibleCount": len(eligible),
         "totalHolders": len(all_holders),
@@ -457,7 +470,7 @@ async def admin_start(request: Request):
         "ok": True,
         "systemStatus": st.get("systemStatus"),
         "roundNumber": st.get("roundNumber"),
-        "nextRoundEndsAt": st["nextRoundEndsAt"].isoformat()
+        "nextRoundEndsAt": _iso_utc(st["nextRoundEndsAt"])
         if isinstance(st.get("nextRoundEndsAt"), datetime)
         else st.get("nextRoundEndsAt"),
     }

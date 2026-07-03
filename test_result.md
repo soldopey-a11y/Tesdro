@@ -19,6 +19,24 @@ user_problem_statement: |
   Admin password: ansdrop123. Helius API key provided.
 
 backend:
+  - task: "Datetime serialization: all datetime fields emit UTC ISO with trailing 'Z'"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "Bugfix: Added _iso_utc helper to emit UTC ISO strings with trailing 'Z'. Previously datetimes were serialized without timezone, causing browser countdown issues."
+      - working: false
+        agent: "testing"
+        comment: "❌ FAILED Step 5: POST /api/dev/force-crash returned endedAt with '+00:00' instead of 'Z', and settledAt without timezone. Issue: _try_advance_round() returns raw datetime objects instead of using _serialize()."
+      - working: true
+        agent: "testing"
+        comment: "✅ VERIFIED: Fixed _try_advance_round() to use _serialize(). All 7 verification steps PASSED. Raw values: nextRoundEndsAt='2026-07-03T20:25:58.346000Z' (delta=119976ms), endedAt='2026-07-03T20:23:58.559518Z', settledAt='2026-07-03T20:23:57.559000Z', paidAt='2026-07-03T20:23:58.860000Z' (age=19ms). All datetime fields correctly end with 'Z', deltas within expected range (0-120500ms), no timezone drift detected."
+
   - task: "GET /api/state includes systemStatus, does not advance rounds while stopped"
     implemented: true
     working: true
@@ -122,7 +140,7 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 1
+  test_sequence: 2
   run_ui: false
 
 test_plan:
@@ -134,16 +152,19 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: |
-      Backend ported from Next.js API routes to FastAPI. Added systemStatus feature +
-      start/reset admin endpoints. Please test the complete raffle lifecycle:
-        1. GET /api/state initially returns systemStatus="stopped", nextRoundEndsAt=null, roundNumber=0.
-        2. POST /api/admin/start (with x-admin-key: ansdrop123) flips systemStatus to "running"
-           and sets nextRoundEndsAt in the future.
-        3. GET /api/state advances rounds & picks winners once running.
-        4. Admin endpoints require x-admin-key; without it should return 401.
-        5. POST /api/admin/reset clears winners collection and returns state to "stopped".
-        6. mark-paid / unmark-paid modify winner records correctly.
-      Env: ADMIN_PASSWORD=ansdrop123, HELIUS_API_KEY set, RAFFLE_INTERVAL_MS=120000.
+      Bugfix: `nextRoundEndsAt` (and every other datetime field) was serialized without
+      timezone info, so browsers parsed it as local time and the countdown was off by
+      the client's timezone offset. Added an `_iso_utc` helper that always emits UTC
+      ISO strings with a trailing `Z`. Please retest:
+        1. GET /api/state — verify `nextRoundEndsAt`, `recentWinners[*].endedAt`,
+           `recentWinners[*].settledAt`, `recentWinners[*].paidAt` (when set) all end
+           with 'Z' AND represent a time in the future relative to the returned `now`
+           (for nextRoundEndsAt when running).
+        2. POST /api/admin/start — response `nextRoundEndsAt` also ends with 'Z' and is
+           roughly `now + 120000` ms in the future.
+        3. Sanity: parse the returned `nextRoundEndsAt` as ISO and confirm that
+           `(nextRoundEndsAt - now)` is between 0 and intervalMs (120000ms) inclusive.
+      All other endpoints should still behave as before.
   - agent: "testing"
     message: |
       ✅ BACKEND TESTING COMPLETE - ALL 13 TESTS PASSED
@@ -166,3 +187,27 @@ agent_communication:
       11. ✅ After reset, GET /api/state does NOT advance rounds (justPicked stays null, roundNumber stays 0)
       
       All backend APIs are working correctly. No critical issues found.
+  - agent: "testing"
+    message: |
+      ✅ DATETIME SERIALIZATION BUGFIX VERIFIED - ALL 7 STEPS PASSED
+      
+      Comprehensive datetime serialization verification completed:
+      
+      ISSUE FOUND & FIXED:
+      - Initial test revealed _try_advance_round() was returning raw datetime objects
+      - Fixed by applying _serialize() to winner_doc before returning
+      
+      VERIFICATION RESULTS (all datetime fields end with 'Z'):
+      1. ✅ POST /api/admin/reset - baseline cleared
+      2. ✅ GET /api/state (stopped) - nextRoundEndsAt=null, systemStatus=stopped
+      3. ✅ POST /api/admin/start - nextRoundEndsAt='2026-07-03T20:25:58.346000Z', delta=119976ms (valid)
+      4. ✅ GET /api/state (running) - nextRoundEndsAt='2026-07-03T20:25:58.346000Z', delta=119886ms (valid)
+      5. ✅ POST /api/dev/force-crash - endedAt='2026-07-03T20:23:58.559518Z', settledAt='2026-07-03T20:23:57.559000Z'
+      6. ✅ GET /api/state recentWinners - all datetime fields end with 'Z' or null
+      7. ✅ POST /api/admin/mark-paid - paidAt='2026-07-03T20:23:58.860000Z', age=19ms (recent)
+      
+      CONFIRMED:
+      - All datetime fields correctly serialized as UTC ISO with trailing 'Z'
+      - Computed deltas within expected range (0-120500ms)
+      - No timezone drift detected
+      - Browser countdown should now work correctly

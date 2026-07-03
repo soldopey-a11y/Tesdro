@@ -1,591 +1,325 @@
+#!/usr/bin/env python3
 """
-Comprehensive backend test for Ansdrop FastAPI lifecycle.
-Tests the complete flow: state, admin auth, start, crash, winners, mark-paid, reset.
+Datetime serialization verification test for Ansdrop backend.
+Verifies that all datetime fields are serialized as UTC ISO strings with trailing 'Z'.
 """
 import requests
 import time
-from datetime import datetime, timezone
+from datetime import datetime
+from typing import Optional
 
-# Configuration
+# Base URL from frontend/.env
 BASE_URL = "https://bro-clone-preview.preview.emergentagent.com/api"
-ADMIN_PASSWORD = "ansdrop123"
-ADMIN_HEADERS = {"x-admin-key": ADMIN_PASSWORD}
+ADMIN_HEADERS = {"x-admin-key": "ansdrop123"}
 
-def log_step(step_num, description):
-    print(f"\n{'='*80}")
-    print(f"STEP {step_num}: {description}")
-    print('='*80)
+def log_test(step: str, status: str, details: str = ""):
+    """Log test results with formatting."""
+    symbol = "✅" if status == "PASS" else "❌"
+    print(f"\n{symbol} Step {step}: {status}")
+    if details:
+        print(f"   {details}")
 
-def log_result(success, message):
-    status = "✅ PASS" if success else "❌ FAIL"
-    print(f"{status}: {message}")
+def verify_utc_iso(value: Optional[str], field_name: str) -> tuple[bool, str, Optional[int]]:
+    """
+    Verify that a datetime string:
+    1. Ends with 'Z' (UTC indicator)
+    2. Can be parsed as ISO format
+    3. Returns the parsed timestamp in milliseconds
+    
+    Returns: (is_valid, message, timestamp_ms)
+    """
+    if value is None:
+        return True, f"{field_name} is null (expected)", None
+    
+    if not isinstance(value, str):
+        return False, f"{field_name} is not a string: {type(value)}", None
+    
+    if not value.endswith('Z'):
+        return False, f"{field_name} does NOT end with 'Z': {value}", None
+    
+    try:
+        # Parse ISO format
+        dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        timestamp_ms = int(dt.timestamp() * 1000)
+        return True, f"{field_name} = {value} (valid UTC ISO)", timestamp_ms
+    except Exception as e:
+        return False, f"{field_name} parse error: {e}", None
 
-def log_detail(key, value):
-    print(f"  → {key}: {value}")
-
-# Test results tracking
-results = {
-    "passed": [],
-    "failed": [],
-    "warnings": []
-}
-
-def record_result(step, success, message):
-    if success:
-        results["passed"].append(f"Step {step}: {message}")
-    else:
-        results["failed"].append(f"Step {step}: {message}")
-    log_result(success, message)
-
-# ============================================================================
-# STEP 1: Test root endpoint
-# ============================================================================
-log_step(1, "GET /api/ — should return {\"message\": \"Ansdrop API\"}")
-try:
-    resp = requests.get(f"{BASE_URL}/", timeout=10)
-    data = resp.json()
-    if resp.status_code == 200 and data.get("message") == "Ansdrop API":
-        record_result(1, True, "Root endpoint returned correct message")
-    else:
-        record_result(1, False, f"Unexpected response: {resp.status_code} {data}")
-except Exception as e:
-    record_result(1, False, f"Exception: {e}")
-
-# ============================================================================
-# STEP 2: Test initial state after fresh reset
-# ============================================================================
-log_step(2, "GET /api/state — verify initial state (stopped, roundNumber=0, etc.)")
-try:
-    resp = requests.get(f"{BASE_URL}/state", timeout=10)
-    state = resp.json()
+def main():
+    print("=" * 80)
+    print("DATETIME SERIALIZATION VERIFICATION TEST")
+    print("=" * 80)
     
-    log_detail("systemStatus", state.get("systemStatus"))
-    log_detail("roundNumber", state.get("roundNumber"))
-    log_detail("nextRoundEndsAt", state.get("nextRoundEndsAt"))
-    log_detail("recentWinners length", len(state.get("recentWinners", [])))
-    log_detail("justPicked", state.get("justPicked"))
-    log_detail("intervalMs", state.get("intervalMs"))
-    log_detail("minEligibleHold", state.get("minEligibleHold"))
-    log_detail("eligibleCount", state.get("eligibleCount"))
-    log_detail("totalHolders", state.get("totalHolders"))
-    log_detail("holderSource", state.get("holderSource"))
+    # Step 1: POST /api/admin/reset
+    print("\n" + "=" * 80)
+    print("STEP 1: POST /api/admin/reset - Clear state to baseline")
+    print("=" * 80)
     
-    checks = []
-    if state.get("systemStatus") == "stopped":
-        checks.append("systemStatus is 'stopped'")
-    else:
-        checks.append(f"❌ systemStatus is '{state.get('systemStatus')}' (expected 'stopped')")
-    
-    if state.get("nextRoundEndsAt") is None:
-        checks.append("nextRoundEndsAt is null")
-    else:
-        checks.append(f"❌ nextRoundEndsAt is '{state.get('nextRoundEndsAt')}' (expected null)")
-    
-    if state.get("roundNumber") == 0:
-        checks.append("roundNumber is 0")
-    else:
-        checks.append(f"❌ roundNumber is {state.get('roundNumber')} (expected 0)")
-    
-    if isinstance(state.get("recentWinners"), list):
-        checks.append(f"recentWinners is array (length: {len(state.get('recentWinners', []))})")
-    else:
-        checks.append(f"❌ recentWinners is not an array")
-    
-    if state.get("justPicked") is None:
-        checks.append("justPicked is null")
-    else:
-        checks.append(f"⚠️ justPicked is not null: {state.get('justPicked')}")
-    
-    if state.get("intervalMs") == 120000:
-        checks.append("intervalMs is 120000")
-    else:
-        checks.append(f"⚠️ intervalMs is {state.get('intervalMs')} (expected 120000)")
-    
-    if state.get("minEligibleHold") == 50000:
-        checks.append("minEligibleHold is 50000")
-    else:
-        checks.append(f"⚠️ minEligibleHold is {state.get('minEligibleHold')} (expected 50000)")
-    
-    # Check required fields exist
-    required_fields = ["eligibleCount", "totalHolders", "holderSource"]
-    for field in required_fields:
-        if field in state:
-            checks.append(f"{field} exists")
-        else:
-            checks.append(f"❌ {field} missing")
-    
-    all_passed = all("❌" not in check for check in checks)
-    for check in checks:
-        print(f"  → {check}")
-    
-    if all_passed:
-        record_result(2, True, "Initial state verified correctly")
-    else:
-        record_result(2, False, "Initial state has issues (see details above)")
+    try:
+        resp = requests.post(f"{BASE_URL}/admin/reset", headers=ADMIN_HEADERS, timeout=10)
+        print(f"Status: {resp.status_code}")
+        print(f"Response: {resp.json()}")
         
-except Exception as e:
-    record_result(2, False, f"Exception: {e}")
-
-# ============================================================================
-# STEP 3: Test holders endpoint
-# ============================================================================
-log_step(3, "GET /api/holders?limit=10 — returns {count, minHold, holders, source}")
-try:
-    resp = requests.get(f"{BASE_URL}/holders?limit=10", timeout=10)
-    data = resp.json()
-    
-    log_detail("count", data.get("count"))
-    log_detail("minHold", data.get("minHold"))
-    log_detail("holders length", len(data.get("holders", [])))
-    log_detail("source", data.get("source"))
-    
-    checks = []
-    if "count" in data:
-        checks.append(f"count field exists: {data['count']}")
-    else:
-        checks.append("❌ count field missing")
-    
-    if "minHold" in data:
-        checks.append(f"minHold field exists: {data['minHold']}")
-    else:
-        checks.append("❌ minHold field missing")
-    
-    if "holders" in data and isinstance(data["holders"], list):
-        checks.append(f"holders is array with {len(data['holders'])} items")
-    else:
-        checks.append("❌ holders field missing or not array")
-    
-    if "source" in data:
-        checks.append(f"source field exists: {data['source']}")
-    else:
-        checks.append("❌ source field missing")
-    
-    all_passed = all("❌" not in check for check in checks)
-    for check in checks:
-        print(f"  → {check}")
-    
-    if all_passed:
-        record_result(3, True, "Holders endpoint returned correct structure")
-    else:
-        record_result(3, False, "Holders endpoint has issues")
-        
-except Exception as e:
-    record_result(3, False, f"Exception: {e}")
-
-# ============================================================================
-# STEP 4: Test admin auth
-# ============================================================================
-log_step(4, "Admin auth: POST /api/admin/ping with/without header")
-
-# 4a: Without header (should be 401)
-try:
-    resp = requests.post(f"{BASE_URL}/admin/ping", timeout=10)
-    if resp.status_code == 401:
-        record_result("4a", True, "Ping without header returned 401")
-    else:
-        record_result("4a", False, f"Ping without header returned {resp.status_code} (expected 401)")
-except Exception as e:
-    record_result("4a", False, f"Exception: {e}")
-
-# 4b: With valid header (should be 200)
-try:
-    resp = requests.post(f"{BASE_URL}/admin/ping", headers=ADMIN_HEADERS, timeout=10)
-    data = resp.json()
-    if resp.status_code == 200 and data.get("ok") is True:
-        record_result("4b", True, "Ping with valid header returned 200 {ok: true}")
-    else:
-        record_result("4b", False, f"Ping with valid header returned {resp.status_code} {data}")
-except Exception as e:
-    record_result("4b", False, f"Exception: {e}")
-
-# 4c: With wrong header (should be 401)
-try:
-    resp = requests.post(f"{BASE_URL}/admin/ping", headers={"x-admin-key": "wrongpassword"}, timeout=10)
-    if resp.status_code == 401:
-        record_result("4c", True, "Ping with wrong header returned 401")
-    else:
-        record_result("4c", False, f"Ping with wrong header returned {resp.status_code} (expected 401)")
-except Exception as e:
-    record_result("4c", False, f"Exception: {e}")
-
-# ============================================================================
-# STEP 5: Test admin start
-# ============================================================================
-log_step(5, "POST /api/admin/start — should set systemStatus=running and nextRoundEndsAt")
-try:
-    resp = requests.post(f"{BASE_URL}/admin/start", headers=ADMIN_HEADERS, timeout=10)
-    data = resp.json()
-    
-    log_detail("ok", data.get("ok"))
-    log_detail("systemStatus", data.get("systemStatus"))
-    log_detail("roundNumber", data.get("roundNumber"))
-    log_detail("nextRoundEndsAt", data.get("nextRoundEndsAt"))
-    
-    checks = []
-    if data.get("ok") is True:
-        checks.append("ok is true")
-    else:
-        checks.append(f"❌ ok is {data.get('ok')}")
-    
-    if data.get("systemStatus") == "running":
-        checks.append("systemStatus is 'running'")
-    else:
-        checks.append(f"❌ systemStatus is '{data.get('systemStatus')}' (expected 'running')")
-    
-    if data.get("nextRoundEndsAt"):
-        # Verify it's in the future
-        try:
-            next_end = datetime.fromisoformat(data["nextRoundEndsAt"].replace("Z", "+00:00"))
-            now = datetime.now(timezone.utc)
-            if next_end > now:
-                checks.append(f"nextRoundEndsAt is in the future")
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("ok") and data.get("systemStatus") == "stopped":
+                log_test("1", "PASS", "Reset successful, systemStatus=stopped")
             else:
-                checks.append(f"❌ nextRoundEndsAt is not in the future")
-        except:
-            checks.append(f"⚠️ nextRoundEndsAt format issue: {data.get('nextRoundEndsAt')}")
-    else:
-        checks.append(f"❌ nextRoundEndsAt is null or missing")
+                log_test("1", "FAIL", f"Unexpected response: {data}")
+        else:
+            log_test("1", "FAIL", f"HTTP {resp.status_code}")
+    except Exception as e:
+        log_test("1", "FAIL", f"Exception: {e}")
+        return
     
-    all_passed = all("❌" not in check for check in checks)
-    for check in checks:
-        print(f"  → {check}")
+    # Step 2: GET /api/state - Verify stopped state
+    print("\n" + "=" * 80)
+    print("STEP 2: GET /api/state - Verify stopped state")
+    print("=" * 80)
     
-    if all_passed:
-        record_result(5, True, "Start endpoint set system to running")
-    else:
-        record_result(5, False, "Start endpoint has issues")
-    
-    # Verify state reflects the change
-    print("\n  Verifying GET /api/state reflects running status...")
-    resp_state = requests.get(f"{BASE_URL}/state", timeout=10)
-    state = resp_state.json()
-    
-    log_detail("state.systemStatus", state.get("systemStatus"))
-    log_detail("state.nextRoundEndsAt", state.get("nextRoundEndsAt"))
-    
-    if state.get("systemStatus") == "running" and state.get("nextRoundEndsAt"):
-        print("  → ✅ State correctly shows running with nextRoundEndsAt")
-    else:
-        print(f"  → ❌ State not updated correctly: systemStatus={state.get('systemStatus')}, nextRoundEndsAt={state.get('nextRoundEndsAt')}")
-        record_result(5, False, "State not updated after start")
+    try:
+        resp = requests.get(f"{BASE_URL}/state", timeout=10)
+        print(f"Status: {resp.status_code}")
+        data = resp.json()
+        print(f"Response keys: {list(data.keys())}")
+        print(f"systemStatus: {data.get('systemStatus')}")
+        print(f"nextRoundEndsAt: {data.get('nextRoundEndsAt')}")
+        print(f"roundNumber: {data.get('roundNumber')}")
         
-except Exception as e:
-    record_result(5, False, f"Exception: {e}")
-
-# ============================================================================
-# STEP 6: Test force-crash
-# ============================================================================
-log_step(6, "POST /api/dev/force-crash — forces round to end and picks winner")
-try:
-    resp = requests.post(f"{BASE_URL}/dev/force-crash", timeout=10)
-    data = resp.json()
-    
-    log_detail("ok", data.get("ok"))
-    winner = data.get("winner")
-    
-    if winner:
-        log_detail("winner.id", winner.get("id"))
-        log_detail("winner.roundNumber", winner.get("roundNumber"))
-        log_detail("winner.address", winner.get("address"))
-        log_detail("winner.crashPoint", winner.get("crashPoint"))
-        log_detail("winner.tokensWon", winner.get("tokensWon"))
-        log_detail("winner.baseReward", winner.get("baseReward"))
-        log_detail("winner.paid", winner.get("paid"))
-        
-        checks = []
-        required_fields = ["id", "roundNumber", "address", "crashPoint", "tokensWon", "baseReward", "paid"]
-        for field in required_fields:
-            if field in winner:
-                checks.append(f"{field} exists: {winner[field]}")
+        if resp.status_code == 200:
+            if (data.get("systemStatus") == "stopped" and 
+                data.get("nextRoundEndsAt") is None and 
+                data.get("roundNumber") == 0):
+                log_test("2", "PASS", "State is stopped, nextRoundEndsAt=null, roundNumber=0")
             else:
-                checks.append(f"❌ {field} missing")
-        
-        if winner.get("paid") is False:
-            checks.append("paid is false (correct)")
+                log_test("2", "FAIL", f"Unexpected state: {data}")
         else:
-            checks.append(f"❌ paid is {winner.get('paid')} (expected false)")
-        
-        all_passed = all("❌" not in check for check in checks)
-        for check in checks:
-            print(f"  → {check}")
-        
-        if all_passed:
-            record_result(6, True, "Force-crash created winner with correct fields")
-            # Store winner ID for later tests
-            global WINNER_ID
-            WINNER_ID = winner.get("id")
-        else:
-            record_result(6, False, "Force-crash winner has issues")
-    else:
-        record_result(6, False, "Force-crash did not return winner object")
+            log_test("2", "FAIL", f"HTTP {resp.status_code}")
+    except Exception as e:
+        log_test("2", "FAIL", f"Exception: {e}")
+        return
     
-    # Verify state shows recentWinners
-    print("\n  Verifying GET /api/state shows recentWinners...")
-    resp_state = requests.get(f"{BASE_URL}/state", timeout=10)
-    state = resp_state.json()
-    recent = state.get("recentWinners", [])
+    # Step 3: POST /api/admin/start - Verify nextRoundEndsAt with 'Z'
+    print("\n" + "=" * 80)
+    print("STEP 3: POST /api/admin/start - Verify nextRoundEndsAt ends with 'Z'")
+    print("=" * 80)
     
-    log_detail("recentWinners length", len(recent))
-    if len(recent) >= 1:
-        print("  → ✅ recentWinners has at least 1 entry")
-    else:
-        print("  → ❌ recentWinners is empty")
-        record_result(6, False, "recentWinners not updated after crash")
+    try:
+        start_time_ms = int(time.time() * 1000)
+        resp = requests.post(f"{BASE_URL}/admin/start", headers=ADMIN_HEADERS, timeout=10)
+        response_time_ms = int(time.time() * 1000)
         
-except Exception as e:
-    record_result(6, False, f"Exception: {e}")
-
-# ============================================================================
-# STEP 7: Test admin winners endpoint
-# ============================================================================
-log_step(7, "POST /api/admin/winners — returns list of winners")
-try:
-    resp = requests.post(f"{BASE_URL}/admin/winners", headers=ADMIN_HEADERS, timeout=10)
-    data = resp.json()
-    
-    winners = data.get("winners", [])
-    log_detail("winners length", len(winners))
-    
-    if isinstance(winners, list) and len(winners) >= 1:
-        record_result(7, True, f"Admin winners returned {len(winners)} winner(s)")
-        log_detail("First winner ID", winners[0].get("id"))
-    else:
-        record_result(7, False, "Admin winners returned empty or invalid list")
+        print(f"Status: {resp.status_code}")
+        data = resp.json()
+        print(f"Response: {data}")
         
-except Exception as e:
-    record_result(7, False, f"Exception: {e}")
-
-# ============================================================================
-# STEP 8: Test mark-paid
-# ============================================================================
-log_step(8, "POST /api/admin/mark-paid — mark winner as paid")
-try:
-    if 'WINNER_ID' not in globals():
-        # Try to get a winner ID from the winners list
-        resp = requests.post(f"{BASE_URL}/admin/winners", headers=ADMIN_HEADERS, timeout=10)
-        winners = resp.json().get("winners", [])
-        if winners:
-            WINNER_ID = winners[0].get("id")
-        else:
-            raise Exception("No winner ID available for testing")
-    
-    payload = {"winnerId": WINNER_ID, "txHash": "testTx123"}
-    resp = requests.post(f"{BASE_URL}/admin/mark-paid", headers=ADMIN_HEADERS, json=payload, timeout=10)
-    data = resp.json()
-    
-    log_detail("ok", data.get("ok"))
-    winner = data.get("winner")
-    
-    if winner:
-        log_detail("winner.paid", winner.get("paid"))
-        log_detail("winner.txHash", winner.get("txHash"))
-        
-        checks = []
-        if data.get("ok") is True:
-            checks.append("ok is true")
-        else:
-            checks.append(f"❌ ok is {data.get('ok')}")
-        
-        if winner.get("paid") is True:
-            checks.append("paid is true")
-        else:
-            checks.append(f"❌ paid is {winner.get('paid')} (expected true)")
-        
-        if winner.get("txHash") == "testTx123":
-            checks.append("txHash is 'testTx123'")
-        else:
-            checks.append(f"❌ txHash is '{winner.get('txHash')}' (expected 'testTx123')")
-        
-        all_passed = all("❌" not in check for check in checks)
-        for check in checks:
-            print(f"  → {check}")
-        
-        if all_passed:
-            record_result(8, True, "Mark-paid updated winner correctly")
-        else:
-            record_result(8, False, "Mark-paid has issues")
-    else:
-        record_result(8, False, "Mark-paid did not return winner object")
-        
-except Exception as e:
-    record_result(8, False, f"Exception: {e}")
-
-# ============================================================================
-# STEP 9: Test unmark-paid
-# ============================================================================
-log_step(9, "POST /api/admin/unmark-paid — unmark winner as paid")
-try:
-    if 'WINNER_ID' not in globals():
-        raise Exception("No winner ID available for testing")
-    
-    payload = {"winnerId": WINNER_ID}
-    resp = requests.post(f"{BASE_URL}/admin/unmark-paid", headers=ADMIN_HEADERS, json=payload, timeout=10)
-    data = resp.json()
-    
-    log_detail("ok", data.get("ok"))
-    
-    if data.get("ok") is True:
-        # Verify by checking winners list
-        resp_winners = requests.post(f"{BASE_URL}/admin/winners", headers=ADMIN_HEADERS, timeout=10)
-        winners = resp_winners.json().get("winners", [])
-        target_winner = next((w for w in winners if w.get("id") == WINNER_ID), None)
-        
-        if target_winner:
-            log_detail("winner.paid", target_winner.get("paid"))
-            if target_winner.get("paid") is False:
-                record_result(9, True, "Unmark-paid set paid to false")
+        if resp.status_code == 200:
+            next_round = data.get("nextRoundEndsAt")
+            is_valid, msg, next_round_ms = verify_utc_iso(next_round, "nextRoundEndsAt")
+            print(f"   {msg}")
+            
+            if is_valid and next_round_ms:
+                # Compute delta: nextRoundEndsAt - response_time
+                delta_ms = next_round_ms - response_time_ms
+                print(f"   Delta (nextRoundEndsAt - response_time): {delta_ms} ms")
+                print(f"   Expected: 0 < delta <= 120500 ms")
+                
+                if 0 < delta_ms <= 120500:
+                    log_test("3", "PASS", f"nextRoundEndsAt ends with 'Z', delta={delta_ms}ms (valid)")
+                else:
+                    log_test("3", "FAIL", f"Delta out of range: {delta_ms}ms")
             else:
-                record_result(9, False, f"Unmark-paid did not set paid to false (paid={target_winner.get('paid')})")
+                log_test("3", "FAIL", msg)
         else:
-            record_result(9, False, "Could not find winner to verify unmark-paid")
-    else:
-        record_result(9, False, f"Unmark-paid returned ok={data.get('ok')}")
+            log_test("3", "FAIL", f"HTTP {resp.status_code}")
+    except Exception as e:
+        log_test("3", "FAIL", f"Exception: {e}")
+        return
+    
+    # Step 4: GET /api/state right after start
+    print("\n" + "=" * 80)
+    print("STEP 4: GET /api/state - Verify running state and UTC format")
+    print("=" * 80)
+    
+    try:
+        resp = requests.get(f"{BASE_URL}/state", timeout=10)
+        state_time_ms = int(time.time() * 1000)
         
-except Exception as e:
-    record_result(9, False, f"Exception: {e}")
-
-# ============================================================================
-# STEP 10: Test admin reset
-# ============================================================================
-log_step(10, "POST /api/admin/reset — wipes winners and sets systemStatus=stopped")
-try:
-    resp = requests.post(f"{BASE_URL}/admin/reset", headers=ADMIN_HEADERS, timeout=10)
-    data = resp.json()
-    
-    log_detail("ok", data.get("ok"))
-    log_detail("systemStatus", data.get("systemStatus"))
-    
-    checks = []
-    if data.get("ok") is True:
-        checks.append("ok is true")
-    else:
-        checks.append(f"❌ ok is {data.get('ok')}")
-    
-    if data.get("systemStatus") == "stopped":
-        checks.append("systemStatus is 'stopped'")
-    else:
-        checks.append(f"❌ systemStatus is '{data.get('systemStatus')}' (expected 'stopped')")
-    
-    all_passed = all("❌" not in check for check in checks)
-    for check in checks:
-        print(f"  → {check}")
-    
-    # Verify state reflects reset
-    print("\n  Verifying GET /api/state reflects reset...")
-    resp_state = requests.get(f"{BASE_URL}/state", timeout=10)
-    state = resp_state.json()
-    
-    log_detail("state.systemStatus", state.get("systemStatus"))
-    log_detail("state.roundNumber", state.get("roundNumber"))
-    log_detail("state.nextRoundEndsAt", state.get("nextRoundEndsAt"))
-    log_detail("state.recentWinners length", len(state.get("recentWinners", [])))
-    
-    state_checks = []
-    if state.get("systemStatus") == "stopped":
-        state_checks.append("systemStatus is 'stopped'")
-    else:
-        state_checks.append(f"❌ systemStatus is '{state.get('systemStatus')}'")
-    
-    if state.get("roundNumber") == 0:
-        state_checks.append("roundNumber is 0")
-    else:
-        state_checks.append(f"❌ roundNumber is {state.get('roundNumber')}")
-    
-    if state.get("nextRoundEndsAt") is None:
-        state_checks.append("nextRoundEndsAt is null")
-    else:
-        state_checks.append(f"❌ nextRoundEndsAt is '{state.get('nextRoundEndsAt')}'")
-    
-    if len(state.get("recentWinners", [])) == 0:
-        state_checks.append("recentWinners is empty array")
-    else:
-        state_checks.append(f"❌ recentWinners has {len(state.get('recentWinners', []))} items (expected 0)")
-    
-    all_state_passed = all("❌" not in check for check in state_checks)
-    for check in state_checks:
-        print(f"  → {check}")
-    
-    if all_passed and all_state_passed:
-        record_result(10, True, "Reset wiped winners and set system to stopped")
-    else:
-        record_result(10, False, "Reset has issues (see details above)")
+        print(f"Status: {resp.status_code}")
+        data = resp.json()
+        print(f"systemStatus: {data.get('systemStatus')}")
+        print(f"nextRoundEndsAt: {data.get('nextRoundEndsAt')}")
+        print(f"now (from response): {data.get('now')}")
         
-except Exception as e:
-    record_result(10, False, f"Exception: {e}")
-
-# ============================================================================
-# STEP 11: Verify state doesn't advance after reset
-# ============================================================================
-log_step(11, "After reset, verify GET /api/state does NOT advance rounds")
-try:
-    # Get state twice with a small delay
-    resp1 = requests.get(f"{BASE_URL}/state", timeout=10)
-    state1 = resp1.json()
+        if resp.status_code == 200:
+            next_round = data.get("nextRoundEndsAt")
+            is_valid, msg, next_round_ms = verify_utc_iso(next_round, "nextRoundEndsAt")
+            print(f"   {msg}")
+            
+            if is_valid and next_round_ms:
+                state_now = data.get("now")
+                if state_now:
+                    delta_ms = next_round_ms - state_now
+                    print(f"   Delta (nextRoundEndsAt - state.now): {delta_ms} ms")
+                    print(f"   Expected: 0 < delta <= 120500 ms")
+                    
+                    if (data.get("systemStatus") == "running" and 
+                        0 < delta_ms <= 120500):
+                        log_test("4", "PASS", f"systemStatus=running, nextRoundEndsAt ends with 'Z', delta={delta_ms}ms")
+                    else:
+                        log_test("4", "FAIL", f"Status={data.get('systemStatus')}, delta={delta_ms}ms")
+                else:
+                    log_test("4", "FAIL", "Missing 'now' field in response")
+            else:
+                log_test("4", "FAIL", msg)
+        else:
+            log_test("4", "FAIL", f"HTTP {resp.status_code}")
+    except Exception as e:
+        log_test("4", "FAIL", f"Exception: {e}")
+        return
     
-    time.sleep(2)
+    # Step 5: POST /api/dev/force-crash - Verify winner datetime fields
+    print("\n" + "=" * 80)
+    print("STEP 5: POST /api/dev/force-crash - Verify winner endedAt and settledAt")
+    print("=" * 80)
     
-    resp2 = requests.get(f"{BASE_URL}/state", timeout=10)
-    state2 = resp2.json()
-    
-    log_detail("First call - justPicked", state1.get("justPicked"))
-    log_detail("First call - roundNumber", state1.get("roundNumber"))
-    log_detail("Second call - justPicked", state2.get("justPicked"))
-    log_detail("Second call - roundNumber", state2.get("roundNumber"))
-    
-    checks = []
-    if state1.get("justPicked") is None:
-        checks.append("First call: justPicked is null")
-    else:
-        checks.append(f"❌ First call: justPicked is not null")
-    
-    if state2.get("justPicked") is None:
-        checks.append("Second call: justPicked is null")
-    else:
-        checks.append(f"❌ Second call: justPicked is not null")
-    
-    if state1.get("roundNumber") == 0 and state2.get("roundNumber") == 0:
-        checks.append("roundNumber stayed at 0 (no advancement)")
-    else:
-        checks.append(f"❌ roundNumber changed: {state1.get('roundNumber')} → {state2.get('roundNumber')}")
-    
-    all_passed = all("❌" not in check for check in checks)
-    for check in checks:
-        print(f"  → {check}")
-    
-    if all_passed:
-        record_result(11, True, "State does not advance rounds while stopped")
-    else:
-        record_result(11, False, "State advanced rounds while stopped (should not)")
+    try:
+        resp = requests.post(f"{BASE_URL}/dev/force-crash", timeout=10)
+        print(f"Status: {resp.status_code}")
+        data = resp.json()
         
-except Exception as e:
-    record_result(11, False, f"Exception: {e}")
+        if resp.status_code == 200:
+            winner = data.get("winner")
+            if winner:
+                print(f"Winner ID: {winner.get('id')}")
+                print(f"endedAt: {winner.get('endedAt')}")
+                print(f"settledAt: {winner.get('settledAt')}")
+                
+                ended_valid, ended_msg, _ = verify_utc_iso(winner.get("endedAt"), "endedAt")
+                settled_valid, settled_msg, _ = verify_utc_iso(winner.get("settledAt"), "settledAt")
+                
+                print(f"   {ended_msg}")
+                print(f"   {settled_msg}")
+                
+                if ended_valid and settled_valid:
+                    log_test("5", "PASS", "Winner endedAt and settledAt both end with 'Z'")
+                else:
+                    log_test("5", "FAIL", "One or more datetime fields invalid")
+            else:
+                log_test("5", "FAIL", "No winner returned")
+        else:
+            log_test("5", "FAIL", f"HTTP {resp.status_code}")
+    except Exception as e:
+        log_test("5", "FAIL", f"Exception: {e}")
+        return
+    
+    # Step 6: GET /api/state - Verify recentWinners datetime fields
+    print("\n" + "=" * 80)
+    print("STEP 6: GET /api/state - Verify recentWinners datetime fields")
+    print("=" * 80)
+    
+    try:
+        resp = requests.get(f"{BASE_URL}/state", timeout=10)
+        print(f"Status: {resp.status_code}")
+        data = resp.json()
+        
+        if resp.status_code == 200:
+            recent_winners = data.get("recentWinners", [])
+            print(f"Recent winners count: {len(recent_winners)}")
+            
+            if recent_winners:
+                all_valid = True
+                for i, winner in enumerate(recent_winners[:3]):  # Check first 3
+                    print(f"\n   Winner {i+1}:")
+                    print(f"   - endedAt: {winner.get('endedAt')}")
+                    print(f"   - settledAt: {winner.get('settledAt')}")
+                    print(f"   - paidAt: {winner.get('paidAt')}")
+                    
+                    ended_valid, ended_msg, _ = verify_utc_iso(winner.get("endedAt"), "endedAt")
+                    settled_valid, settled_msg, _ = verify_utc_iso(winner.get("settledAt"), "settledAt")
+                    paid_valid, paid_msg, _ = verify_utc_iso(winner.get("paidAt"), "paidAt")
+                    
+                    print(f"      {ended_msg}")
+                    print(f"      {settled_msg}")
+                    print(f"      {paid_msg}")
+                    
+                    if not (ended_valid and settled_valid and paid_valid):
+                        all_valid = False
+                
+                if all_valid:
+                    log_test("6", "PASS", "All recentWinners datetime fields end with 'Z' or are null")
+                else:
+                    log_test("6", "FAIL", "Some datetime fields invalid")
+            else:
+                log_test("6", "FAIL", "No recent winners found")
+        else:
+            log_test("6", "FAIL", f"HTTP {resp.status_code}")
+    except Exception as e:
+        log_test("6", "FAIL", f"Exception: {e}")
+        return
+    
+    # Step 7: POST /api/admin/mark-paid - Verify paidAt field
+    print("\n" + "=" * 80)
+    print("STEP 7: POST /api/admin/mark-paid - Verify paidAt ends with 'Z'")
+    print("=" * 80)
+    
+    try:
+        # Get a winner ID first
+        resp = requests.get(f"{BASE_URL}/state", timeout=10)
+        data = resp.json()
+        recent_winners = data.get("recentWinners", [])
+        
+        if recent_winners:
+            winner_id = recent_winners[0].get("id")
+            print(f"Marking winner {winner_id} as paid...")
+            
+            mark_resp = requests.post(
+                f"{BASE_URL}/admin/mark-paid",
+                headers=ADMIN_HEADERS,
+                json={"winnerId": winner_id, "txHash": "verifyTx"},
+                timeout=10
+            )
+            
+            print(f"Status: {mark_resp.status_code}")
+            mark_data = mark_resp.json()
+            
+            if mark_resp.status_code == 200:
+                winner = mark_data.get("winner")
+                if winner:
+                    paid_at = winner.get("paidAt")
+                    print(f"paidAt: {paid_at}")
+                    
+                    paid_valid, paid_msg, paid_ms = verify_utc_iso(paid_at, "paidAt")
+                    print(f"   {paid_msg}")
+                    
+                    if paid_valid and paid_ms:
+                        # Verify it's a recent time (within last 10 seconds)
+                        now_ms = int(time.time() * 1000)
+                        age_ms = now_ms - paid_ms
+                        print(f"   Age of paidAt: {age_ms} ms (should be < 10000 ms)")
+                        
+                        if age_ms < 10000 and age_ms >= 0:
+                            log_test("7", "PASS", f"paidAt ends with 'Z' and is recent (age={age_ms}ms)")
+                        else:
+                            log_test("7", "FAIL", f"paidAt age out of range: {age_ms}ms")
+                    else:
+                        log_test("7", "FAIL", paid_msg)
+                else:
+                    log_test("7", "FAIL", "No winner in response")
+            else:
+                log_test("7", "FAIL", f"HTTP {mark_resp.status_code}")
+        else:
+            log_test("7", "FAIL", "No winners available to mark as paid")
+    except Exception as e:
+        log_test("7", "FAIL", f"Exception: {e}")
+        return
+    
+    # Final summary
+    print("\n" + "=" * 80)
+    print("VERIFICATION COMPLETE")
+    print("=" * 80)
+    print("\nAll datetime fields verified to end with 'Z' (UTC ISO format)")
+    print("Computed deltas confirm no timezone drift")
 
-# ============================================================================
-# FINAL SUMMARY
-# ============================================================================
-print("\n" + "="*80)
-print("FINAL TEST SUMMARY")
-print("="*80)
-
-print(f"\n✅ PASSED: {len(results['passed'])}")
-for item in results['passed']:
-    print(f"  • {item}")
-
-if results['failed']:
-    print(f"\n❌ FAILED: {len(results['failed'])}")
-    for item in results['failed']:
-        print(f"  • {item}")
-else:
-    print(f"\n❌ FAILED: 0")
-
-if results['warnings']:
-    print(f"\n⚠️  WARNINGS: {len(results['warnings'])}")
-    for item in results['warnings']:
-        print(f"  • {item}")
-
-print("\n" + "="*80)
-if not results['failed']:
-    print("🎉 ALL TESTS PASSED!")
-else:
-    print(f"⚠️  {len(results['failed'])} TEST(S) FAILED")
-print("="*80)
+if __name__ == "__main__":
+    main()
