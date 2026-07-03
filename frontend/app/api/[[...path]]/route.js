@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { MongoClient } from 'mongodb'
 import { v4 as uuidv4 } from 'uuid'
+import crypto from 'crypto'
 
 // ---------- Config ----------
 const ROUND_INTERVAL_MS = parseInt(process.env.RAFFLE_INTERVAL_MS || '60000', 10)
@@ -11,6 +12,20 @@ const HELIUS_API_KEY = process.env.HELIUS_API_KEY || ''
 const USE_REAL_HOLDERS = process.env.USE_REAL_HOLDERS === '1' && !!HELIUS_API_KEY
 const DB_NAME = process.env.DB_NAME || 'ansdrop'
 const HELIUS_CACHE_TTL_MS = 120000 // 2 min
+const MAX_CRASH_POINT = 100 // cap multiplier at 100x
+
+// ---------- Provably-fair helpers ----------
+function newSeed() {
+  return crypto.randomBytes(32).toString('hex')
+}
+function sha256hex(input) {
+  return crypto.createHash('sha256').update(input).digest('hex')
+}
+// Deterministic [0, 1) float from (seed, tag). First 15 hex chars = 60 bits.
+function seedRandom(seed, tag) {
+  const h = sha256hex(seed + ':' + tag)
+  return parseInt(h.slice(0, 15), 16) / Math.pow(2, 60)
+}
 
 // ---------- Mongo ----------
 let client
@@ -156,18 +171,16 @@ async function getEligibleHolders() {
 }
 
 // ---------- Round / winner logic ----------
-function generateCrashPoint() {
-  // House-edge-free-ish exponential crash multiplier.
-  // Distribution: heavy tail. Most crashes 1.0x - 3x, some go big.
-  const r = Math.random()
-  // Use inverse CDF of exponential-ish shape
+function generateCrashPointFromRand(r) {
+  // House-edge-free-ish exponential crash multiplier, capped at MAX_CRASH_POINT.
   const cp = Math.max(1.0, 0.99 / (1 - r * 0.99))
-  return Math.min(cp, 250) // cap at 250x
+  return Math.min(cp, MAX_CRASH_POINT)
 }
 
 async function ensureState(db) {
   const state = await db.collection('raffle_state').findOne({ _id: 'singleton' })
   if (!state) {
+    const seed = newSeed()
     const newState = {
       _id: 'singleton',
       systemStatus: 'stopped',
@@ -175,6 +188,8 @@ async function ensureState(db) {
       roundNumber: 0,
       intervalMs: ROUND_INTERVAL_MS,
       startedAt: null,
+      seed,
+      seedCommit: sha256hex(seed),
     }
     await db.collection('raffle_state').insertOne(newState)
     return newState
@@ -183,6 +198,11 @@ async function ensureState(db) {
   const patch = {}
   if (state.systemStatus === undefined) patch.systemStatus = 'stopped'
   if (state.roundNumber === undefined) patch.roundNumber = 0
+  if (!state.seed) {
+    const s = newSeed()
+    patch.seed = s
+    patch.seedCommit = sha256hex(s)
+  }
   if (Object.keys(patch).length > 0) {
     await db.collection('raffle_state').updateOne(
       { _id: 'singleton' },
@@ -198,42 +218,63 @@ const BASE_REWARD_POOL = 5000
 
 async function tryAdvanceRound(db) {
   const now = new Date()
-  // Atomically "claim" the round if it's due AND system is running.
-  const advanced = await db.collection('raffle_state').findOneAndUpdate(
+  // Prepare a NEW seed for the NEXT round. The OLD seed (still in `prev`) is what
+  // we use to derive THIS round's winner + crash — its commit was already public.
+  const nextSeedValue = newSeed()
+  const nextCommitValue = sha256hex(nextSeedValue)
+
+  const prev = await db.collection('raffle_state').findOneAndUpdate(
     {
       _id: 'singleton',
       systemStatus: 'running',
       nextRoundEndsAt: { $lte: now, $ne: null },
     },
     {
-      $set: { nextRoundEndsAt: new Date(Date.now() + ROUND_INTERVAL_MS) },
+      $set: {
+        nextRoundEndsAt: new Date(Date.now() + ROUND_INTERVAL_MS),
+        seed: nextSeedValue,
+        seedCommit: nextCommitValue,
+      },
       $inc: { roundNumber: 1 },
     },
     { returnDocument: 'before' }
   )
-  const prev = advanced && (advanced.value || advanced) // driver version safety
-  if (!prev || !prev._id) return null
+  const claimed = prev && (prev.value || prev) // driver version safety
+  if (!claimed || !claimed._id) return null
 
   const eligible = await getEligibleHolders()
   if (eligible.length === 0) return null
 
-  const winner = eligible[Math.floor(Math.random() * eligible.length)]
-  const crashPoint = generateCrashPoint()
+  // Derive winner + crash deterministically from the revealed seed.
+  const roundSeed = claimed.seed
+  const roundCommit = claimed.seedCommit
+  const thisRoundNumber = claimed.roundNumber
+
+  const winnerRand = seedRandom(roundSeed, `winner:${thisRoundNumber}`)
+  const winner = eligible[Math.floor(winnerRand * eligible.length)]
+
+  const crashRand = seedRandom(roundSeed, `crash:${thisRoundNumber}`)
+  const crashPoint = generateCrashPointFromRand(crashRand)
   const tokensWon = Math.floor(BASE_REWARD_POOL * crashPoint)
 
   const winnerDoc = {
     id: uuidv4(),
-    roundNumber: prev.roundNumber,
+    roundNumber: thisRoundNumber,
     address: winner.address,
     balance: winner.balance,
     crashPoint: parseFloat(crashPoint.toFixed(2)),
     tokensWon,
     baseReward: BASE_REWARD_POOL,
     endedAt: new Date(),
-    settledAt: prev.nextRoundEndsAt,
+    settledAt: claimed.nextRoundEndsAt,
     paid: false,
     paidAt: null,
     txHash: null,
+    // Provably-fair audit fields
+    seedCommit: roundCommit,
+    revealedSeed: roundSeed,
+    eligibleCount: eligible.length,
+    winnerIndex: Math.floor(winnerRand * eligible.length),
   }
   await db.collection('winners').insertOne(winnerDoc)
   return winnerDoc
@@ -284,6 +325,8 @@ async function handleGetState(db) {
     totalHolders,
     totalEligibleBalance,
     baseReward: BASE_REWARD_POOL,
+    maxCrashPoint: MAX_CRASH_POINT,
+    seedCommit: state.seedCommit || null,
     recentWinners: recent,
     justPicked,
     holderSource: source,
@@ -416,6 +459,8 @@ export async function POST(request, { params }) {
       if (route === 'admin/start') {
         await ensureState(db)
         const nextEnd = new Date(Date.now() + ROUND_INTERVAL_MS)
+        // Fresh seed for the very next round.
+        const s = newSeed()
         await db.collection('raffle_state').updateOne(
           { _id: 'singleton' },
           {
@@ -423,21 +468,25 @@ export async function POST(request, { params }) {
               systemStatus: 'running',
               nextRoundEndsAt: nextEnd,
               startedAt: new Date(),
+              seed: s,
+              seedCommit: sha256hex(s),
             },
             $inc: { roundNumber: 1 },
           }
         )
-        const s = await db.collection('raffle_state').findOne({ _id: 'singleton' })
+        const st = await db.collection('raffle_state').findOne({ _id: 'singleton' })
         return NextResponse.json({
           ok: true,
-          systemStatus: s.systemStatus,
-          roundNumber: s.roundNumber,
-          nextRoundEndsAt: s.nextRoundEndsAt,
+          systemStatus: st.systemStatus,
+          roundNumber: st.roundNumber,
+          nextRoundEndsAt: st.nextRoundEndsAt,
+          seedCommit: st.seedCommit,
         })
       }
 
       if (route === 'admin/reset') {
         await db.collection('winners').deleteMany({})
+        const s = newSeed()
         await db.collection('raffle_state').updateOne(
           { _id: 'singleton' },
           {
@@ -446,6 +495,8 @@ export async function POST(request, { params }) {
               nextRoundEndsAt: null,
               roundNumber: 0,
               startedAt: null,
+              seed: s,
+              seedCommit: sha256hex(s),
             },
           },
           { upsert: true }
