@@ -991,7 +991,7 @@ function FairnessBadge({ state, recentWinners }) {
 {`SHA256(revealedSeed) === seedCommit                (integrity check)
 h = SHA256(revealedSeed + ":crash:" + roundNumber)
 r = int(h[0..15], 16) / 2^60                       (uniform in [0,1))
-crashPoint = min( 0.99 / (1 - r * 0.99),  100 )    (capped at 100x)`}
+crashPoint = min( 0.99 / (1 - r * 0.99),  1000 )   (capped at 1000x)`}
                   </pre>
                 </div>
 
@@ -1012,7 +1012,7 @@ crashPoint = min( 0.99 / (1 - r * 0.99),  100 )    (capped at 100x)`}
                     </li>
                     <li>
                       Distribution is uniform &amp; unbiased across{' '}
-                      <span className="font-mono text-amber-300">1.00x – 100x</span> with a heavy
+                      <span className="font-mono text-amber-300">1.00x – 1000x</span> with a heavy
                       exponential tail (most rounds land 1x–3x, rare ones fly).
                     </li>
                     <li>
@@ -1022,8 +1022,8 @@ crashPoint = min( 0.99 / (1 - r * 0.99),  100 )    (capped at 100x)`}
                     </li>
                     <li>
                       Cap enforced server-side at{' '}
-                      <span className="font-mono text-amber-300">100x</span> — no round can pay
-                      out more than <span className="font-mono">baseReward × 100</span>.
+                      <span className="font-mono text-amber-300">1000x</span> — no round can pay
+                      out more than <span className="font-mono">baseReward × 1000</span>.
                     </li>
                   </ul>
                 </div>
